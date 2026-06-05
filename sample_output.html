@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kobie AI - Sample User Output</title>
+  <style>
+    :root {
+      --ink: #17202a;
+      --muted: #637083;
+      --line: #d9e2ec;
+      --paper: #f6f8fb;
+      --panel: #ffffff;
+      --navy: #17324d;
+      --teal: #0f7c7d;
+      --green: #16704a;
+      --amber: #a66100;
+      --red: #b83232;
+      --blue: #1f65b7;
+      --soft-blue: #e9f2ff;
+      --soft-green: #e8f6ef;
+      --soft-amber: #fff2d8;
+      --soft-red: #fde8e8;
+      --soft-grey: #eef2f6;
+      --shadow: 0 18px 42px rgba(23, 50, 77, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: linear-gradient(180deg, #edf5f7 0, #f7f9fc 330px, #f6f8fb 100%);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    a {
+      color: var(--blue);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    a:hover { text-decoration: underline; }
+
+    .shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid rgba(23, 50, 77, 0.12);
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(14px);
+    }
+
+    .topbar .shell {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 14px 0;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 250px;
+    }
+
+    .mark {
+      display: grid;
+      width: 40px;
+      height: 40px;
+      place-items: center;
+      border-radius: 8px;
+      color: white;
+      background: linear-gradient(135deg, var(--navy), var(--teal));
+      font-weight: 900;
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 15px;
+    }
+
+    .brand span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .nav {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+    }
+
+    .nav a {
+      min-height: 34px;
+      border-radius: 8px;
+      padding: 7px 12px;
+      color: var(--navy);
+      background: #f3f7fb;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .hero {
+      padding: 42px 0 26px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 26px;
+      align-items: end;
+    }
+
+    .eyebrow {
+      color: var(--teal);
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 820px;
+      margin: 8px 0 14px;
+      color: #102a43;
+      font-size: clamp(34px, 5vw, 58px);
+      line-height: 1.04;
+    }
+
+    .hero p {
+      max-width: 760px;
+      margin: 0;
+      color: #47586a;
+      font-size: 17px;
+    }
+
+    .sample-input {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .sample-input header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--line);
+      padding: 13px 16px;
+      background: #f8fbfd;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .prompt {
+      padding: 16px;
+      color: #102a43;
+      font-size: 16px;
+      font-weight: 750;
+    }
+
+    section { padding: 22px 0; }
+
+    .section-title {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 14px;
+    }
+
+    .section-title h2 {
+      margin: 0;
+      color: #102a43;
+      font-size: 25px;
+    }
+
+    .section-title p {
+      max-width: 610px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .output-shell {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 12px 28px rgba(23, 50, 77, 0.08);
+      overflow: hidden;
+    }
+
+    .output-head {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 18px;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      padding: 18px;
+      background: #fbfdff;
+    }
+
+    .output-head h3 {
+      margin: 0;
+      color: #102a43;
+      font-size: 22px;
+    }
+
+    .output-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .badge {
+      display: inline-flex;
+      min-height: 26px;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .badge.good { color: var(--green); background: var(--soft-green); }
+    .badge.warn { color: var(--amber); background: var(--soft-amber); }
+    .badge.danger { color: var(--red); background: var(--soft-red); }
+    .badge.info { color: #075f73; background: #e2f5f7; }
+    .badge.grey { color: #596878; background: var(--soft-grey); }
+
+    .answer-band {
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      gap: 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .answer {
+      padding: 18px;
+    }
+
+    .answer h4,
+    .side-score h4,
+    .block h4 {
+      margin: 0 0 8px;
+      color: #102a43;
+      font-size: 15px;
+      text-transform: uppercase;
+    }
+
+    .answer p {
+      margin: 0;
+      color: #2b3a49;
+      font-size: 16px;
+    }
+
+    .side-score {
+      border-left: 1px solid var(--line);
+      padding: 18px;
+      background: #f8fbfd;
+    }
+
+    .score {
+      display: grid;
+      gap: 8px;
+    }
+
+    .score-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .score-row strong { color: var(--ink); }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      padding: 18px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      padding: 18px;
+    }
+
+    .block {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 16px;
+    }
+
+    .metric-list {
+      display: grid;
+      gap: 11px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .metric-list li {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid #edf2f7;
+      padding-bottom: 9px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .metric-list li:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .metric-list strong {
+      color: #102a43;
+      text-align: right;
+    }
+
+    .alert {
+      display: grid;
+      grid-template-columns: 8px 1fr;
+      overflow: hidden;
+      border: 1px solid #efc77e;
+      border-radius: 8px;
+      background: #fff8eb;
+    }
+
+    .alert::before { content: ""; background: var(--amber); }
+    .alert.red { border-color: #f0b4b4; background: #fff3f3; }
+    .alert.red::before { background: var(--red); }
+
+    .alert div { padding: 13px 14px; }
+
+    .alert strong {
+      display: block;
+      margin-bottom: 3px;
+      color: #7a4800;
+      font-size: 13px;
+      text-transform: uppercase;
+    }
+
+    .alert.red strong { color: var(--red); }
+
+    .alert p {
+      margin: 0;
+      color: #5a4b32;
+      font-size: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      border-top: 1px solid var(--line);
+      padding: 13px 14px;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    th {
+      color: #53677b;
+      background: #f8fbfd;
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .value {
+      color: #102a43;
+      font-weight: 800;
+    }
+
+    .note {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .review-cell {
+      background: #fff4f4;
+    }
+
+    .missing-cell {
+      color: #596878;
+      background: #f1f4f8;
+    }
+
+    .bar {
+      width: 116px;
+      height: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e8edf3;
+    }
+
+    .bar i {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--green);
+    }
+
+    .bar.warn i { background: var(--amber); }
+    .bar.red i { background: var(--red); }
+
+    .sources {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 7px;
+    }
+
+    .sources a {
+      display: inline-flex;
+      border: 1px solid #c6d8ea;
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: #f4f8ff;
+      font-size: 12px;
+    }
+
+    .debate {
+      display: grid;
+      gap: 12px;
+      padding: 18px;
+      border-top: 1px solid var(--line);
+      background: #fbfdff;
+    }
+
+    .round-label {
+      display: inline-flex;
+      width: fit-content;
+      min-height: 26px;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: #075f73;
+      background: #e2f5f7;
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .debate-card {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 14px;
+    }
+
+    .agent {
+      color: var(--navy);
+      font-size: 13px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .debate-card p {
+      margin: 0;
+      color: #344559;
+      font-size: 14px;
+    }
+
+    .debate-card ul {
+      margin: 0;
+      padding-left: 18px;
+      color: #344559;
+      font-size: 14px;
+    }
+
+    .debate-card li + li {
+      margin-top: 5px;
+    }
+
+    .decision-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      padding: 18px;
+      border-top: 1px solid var(--line);
+      background: #fbfdff;
+    }
+
+    .decision-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+      padding: 14px;
+    }
+
+    .decision-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .decision-card strong {
+      display: block;
+      margin-top: 5px;
+      color: #102a43;
+      font-size: 17px;
+    }
+
+    .decision-card p {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .compare-input {
+      margin-bottom: 14px;
+    }
+
+    .comparison-table td:nth-child(2),
+    .comparison-table td:nth-child(3) {
+      width: 31%;
+    }
+
+    .winner {
+      display: grid;
+      grid-template-columns: 210px 1fr;
+      gap: 16px;
+      border-top: 1px solid var(--line);
+      padding: 18px;
+      background: #f8fbfd;
+    }
+
+    .winner strong {
+      color: #102a43;
+    }
+
+    .footer {
+      border-top: 1px solid var(--line);
+      margin-top: 28px;
+      padding: 24px 0 34px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      .hero-grid,
+      .answer-band,
+      .grid-2,
+      .grid-3,
+      .decision-grid,
+      .winner {
+        grid-template-columns: 1fr;
+      }
+
+      .side-score { border-left: 0; border-top: 1px solid var(--line); }
+    }
+
+    @media (max-width: 640px) {
+      .topbar .shell,
+      .section-title,
+      .output-head {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .topbar .shell,
+      .section-title {
+        display: flex;
+      }
+
+      .badges { justify-content: flex-start; }
+
+      th,
+      td {
+        padding: 11px 10px;
+        font-size: 13px;
+      }
+
+      .debate-card {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell">
+      <div class="brand">
+        <div class="mark">K</div>
+        <div>
+          <strong>Kobie AI Intelligence Output</strong>
+          <span>What the user receives after running the system</span>
+        </div>
+      </div>
+      <nav class="nav" aria-label="Page sections">
+        <a href="#normal-case">Normal Case</a>
+        <a href="#comparison-case">Comparison Case</a>
+        <a href="#debate">Debate Output</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="shell hero-grid">
+        <div>
+          <div class="eyebrow">Sample final output, not implementation notes</div>
+          <h1>From one user prompt to a finished analyst-ready intelligence brief.</h1>
+          <p>
+            This mockup shows the visible output of the system: the user's input,
+            the generated intelligence answer, confidence labels, conflicts, debate
+            result, citations, and human review markers.
+          </p>
+        </div>
+        <div class="sample-input">
+          <header>
+            <span>Sample user input</span>
+            <span>Normal mode</span>
+          </header>
+          <div class="prompt">
+            "Create a loyalty intelligence brief for British Airways Executive Club.
+            Show how the program is performing, where members may be unhappy, recent
+            news, historical earn-rate movement, and any fields that need human review."
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="normal-case">
+      <div class="shell">
+        <div class="section-title">
+          <h2>Normal Case: User Receives This Brief</h2>
+          <p>The output is written for an analyst, with clear decisions and review flags instead of backend pipeline details.</p>
+        </div>
+
+        <article class="output-shell">
+          <div class="output-head">
+            <div>
+              <h3>British Airways Executive Club - Loyalty Intelligence Brief</h3>
+              <p>Generated from 7 usable sources. Last refreshed: 01 Jun 2026, 10:42 IST.</p>
+            </div>
+            <div class="badges">
+              <span class="badge good">Reliable brief</span>
+              <span class="badge warn">1 conflict resolved</span>
+              <span class="badge danger">1 human review</span>
+            </div>
+          </div>
+
+          <div class="answer-band">
+            <div class="answer">
+              <h4>Executive Answer</h4>
+              <p>
+                British Airways Executive Club remains valuable for frequent international travellers,
+                but the member-risk signal is mixed. Public discussion shows complaints around
+                devaluation and earning changes, while official sources still present the program as
+                stable. The strongest analyst takeaway is not only what the program offers, but where
+                member trust may be weakening.
+              </p>
+            </div>
+            <aside class="side-score">
+              <h4>Trust Summary</h4>
+              <div class="score">
+                <div class="score-row"><span>Overall confidence</span><strong>82%</strong></div>
+                <div class="score-row"><span>Fields found</span><strong>14 / 17</strong></div>
+                <div class="score-row"><span>Human review needed</span><strong>1 field</strong></div>
+                <div class="score-row"><span>Brief status</span><strong>Usable with caution</strong></div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="grid-2">
+            <div class="block">
+              <h4>Performance Signals</h4>
+              <ul class="metric-list">
+                <li><span>Churn signal</span><strong>Medium risk</strong></li>
+                <li><span>Forum sentiment</span><strong>Mixed to negative</strong></li>
+                <li><span>Earn-rate trend</span><strong>Down vs last year</strong></li>
+                <li><span>Program news</span><strong>Recent partner and earning updates</strong></li>
+                <li><span>Human review</span><strong>Required for trend claim</strong></li>
+              </ul>
+            </div>
+
+            <div class="block">
+              <h4>What The System Concludes</h4>
+              <ul class="metric-list">
+                <li><span>Best user fit</span><strong>Frequent international traveller</strong></li>
+                <li><span>Main strength</span><strong>Oneworld redemption access</strong></li>
+                <li><span>Member risk</span><strong>Devaluation complaints rising</strong></li>
+                <li><span>Action</span><strong>Verify trend before client use</strong></li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="alert">
+              <div>
+                <strong>Conflict Resolved By Debate</strong>
+                <p>
+                  Two sources reported different earn-rate values. The system selected the newer,
+                  corroborated value but kept the conflict visible in the report.
+                </p>
+              </div>
+            </div>
+            <div class="alert red">
+              <div>
+                <strong>Human Review Required</strong>
+                <p>
+                  Recent change signal is not strong enough for a final business recommendation.
+                  Analyst should verify the latest official terms before presenting to a client.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <table aria-label="Normal case user output">
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Output Shown To User</th>
+                <th>Confidence</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="value">Program name</td>
+                <td>British Airways Executive Club<div class="sources"><a href="https://www.britishairways.com/" target="_blank">Official site</a></div></td>
+                <td><div class="bar"><i style="width: 96%"></i></div><div class="note">0.96 high</div></td>
+                <td><span class="badge good">Accepted</span></td>
+              </tr>
+              <tr>
+                <td class="value">Base earn rate</td>
+                <td>6 Avios per GBP 1 on eligible BA-marketed flights<div class="sources"><a href="https://www.britishairways.com/" target="_blank">Official</a><a href="https://www.headforpoints.com/" target="_blank">Tracker</a></div></td>
+                <td><div class="bar warn"><i style="width: 74%"></i></div><div class="note">0.74 medium-high</div></td>
+                <td><span class="badge warn">Debate resolved</span></td>
+              </tr>
+              <tr>
+                <td class="value">Tier structure</td>
+                <td>Blue, Bronze, Silver, Gold<div class="sources"><a href="https://www.britishairways.com/" target="_blank">Official site</a></div></td>
+                <td><div class="bar"><i style="width: 91%"></i></div><div class="note">0.91 high</div></td>
+                <td><span class="badge good">Accepted</span></td>
+              </tr>
+              <tr>
+                <td class="value">Redemption value</td>
+                <td>Estimated around 0.70 cents per Avios, depending on redemption route and cabin<div class="sources"><a href="https://thepointsguy.com/" target="_blank">TPG</a><a href="https://www.headforpoints.com/" target="_blank">Head for Points</a></div></td>
+                <td><div class="bar warn"><i style="width: 68%"></i></div><div class="note">0.68 medium</div></td>
+                <td><span class="badge warn">Use as estimate</span></td>
+              </tr>
+              <tr>
+                <td class="value">Recent changes</td>
+                <td class="review-cell">Some sources suggest recent earning-table changes, but evidence is not consistent enough for a final claim.</td>
+                <td><div class="bar red"><i style="width: 42%"></i></div><div class="note">0.42 low</div></td>
+                <td><span class="badge danger">Human review required</span></td>
+              </tr>
+              <tr>
+                <td class="value">Member churn signal</td>
+                <td>Forum and social discussion shows recurring complaints about devaluation, reduced earning value, and unclear communication.<div class="sources"><a href="https://www.flyertalk.com/" target="_blank">Forum</a><a href="https://www.headforpoints.com/" target="_blank">Tracker comments</a></div></td>
+                <td><div class="bar warn"><i style="width: 63%"></i></div><div class="note">0.63 medium</div></td>
+                <td><span class="badge warn">Monitor</span></td>
+              </tr>
+              <tr>
+                <td class="value">Historical trend</td>
+                <td class="review-cell">Sample trend indicates earn value is weaker than last year for some traveller profiles, but exact historical comparison needs analyst confirmation.</td>
+                <td><div class="bar red"><i style="width: 48%"></i></div><div class="note">0.48 low-medium</div></td>
+                <td><span class="badge danger">Human review required</span></td>
+              </tr>
+              <tr>
+                <td class="value">Program news</td>
+                <td>Recent public updates and travel-media coverage mention earning-rule and partner-program changes.</td>
+                <td><div class="bar warn"><i style="width: 66%"></i></div><div class="note">0.66 medium</div></td>
+                <td><span class="badge warn">Watchlist</span></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="debate" id="debate">
+            <div class="section-title" style="margin:0;">
+              <h2>Sample Debate Output</h2>
+              <p>Expanded view of how the system handles a contradiction before showing the final field value.</p>
+            </div>
+            <span class="round-label">Step 1 - Agent 1 Opening Statement</span>
+            <div class="debate-card">
+              <div class="agent">Agent 1 (Official Source)</div>
+              <ul>
+                <li>Claim: use the official British Airways earning page as the primary value.</li>
+                <li>Reason: the page is owned by the program and directly defines member earning rules.</li>
+                <li>Risk raised: third-party sites may summarize old or route-specific values incorrectly.</li>
+              </ul>
+            </div>
+            <span class="round-label">Step 2 - Agent 2 Opening Statement</span>
+            <div class="debate-card">
+              <div class="agent">Agent 2 (Recent Evidence)</div>
+              <ul>
+                <li>Claim: use the newer third-party tracker value for the brief.</li>
+                <li>Reason: earn rates are high-volatility fields, and the tracker was updated after the official page.</li>
+                <li>Risk raised: official program pages can lag after devaluations or earning-table changes.</li>
+              </ul>
+            </div>
+            <span class="round-label">Step 3 - Agent 1 Contradiction</span>
+            <div class="debate-card">
+              <div class="agent">Agent 1 (Official Source)</div>
+              <p>
+                Contradiction: "The third-party tracker does not prove that the official rule changed for all eligible members.
+                It may describe only selected routes, cabin classes, or promotional exclusions."
+              </p>
+            </div>
+            <span class="round-label">Step 4 - Agent 2 Contradiction</span>
+            <div class="debate-card">
+              <div class="agent">Agent 2 (Recent Evidence)</div>
+              <p>
+                Contradiction: "The official page has lower recency and does not mention the latest tracker-observed change.
+                Since this is an earn-rate field, recency should outweigh source ownership."
+              </p>
+            </div>
+            <span class="round-label">Step 5 - Evidence Review</span>
+            <div class="debate-card">
+              <div class="agent">System Evidence Review</div>
+              <ul>
+                <li>Official source confidence: 0.72, strong authority, weaker freshness.</li>
+                <li>Third-party tracker confidence: 0.76, stronger freshness, medium authority.</li>
+                <li>Score gap: 0.04, too close for automatic resolution.</li>
+                <li>Verdict requirement: keep the field visible, but mark the uncertainty clearly.</li>
+              </ul>
+            </div>
+            <span class="round-label">Step 6 - Final Review</span>
+            <div class="debate-card">
+              <div class="agent">Final Decision</div>
+              <ul>
+                <li>Final selected output: "6 Avios per GBP 1 on eligible BA-marketed flights."</li>
+                <li>Status shown to user: Debate resolved.</li>
+                <li>Additional flag: Human review required for the broader recent-change claim.</li>
+                <li>Reason: the value can appear in the sample brief, but the performance trend and churn-risk claim need manual verification before client use.</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="comparison-case">
+      <div class="shell">
+        <div class="section-title">
+          <h2>Comparison Case: User Receives This Output</h2>
+          <p>The system compares two programs and labels real differences separately from missing information.</p>
+        </div>
+
+        <div class="sample-input compare-input">
+          <header>
+            <span>Sample user input</span>
+            <span>Comparison mode</span>
+          </header>
+          <div class="prompt">
+            "Compare Marriott Bonvoy and Hilton Honors for a high-spend business traveller.
+            Show which program is performing better, where members appear unhappy, recent
+            program news, trend direction, and what needs human review."
+          </div>
+        </div>
+
+        <article class="output-shell">
+          <div class="output-head">
+            <div>
+              <h3>Marriott Bonvoy vs Hilton Honors - Competitive Comparison</h3>
+              <p>Generated from 17 usable sources across both programs.</p>
+            </div>
+            <div class="badges">
+              <span class="badge info">Comparison brief</span>
+              <span class="badge warn">2 mismatches</span>
+              <span class="badge grey">1 data gap</span>
+            </div>
+          </div>
+
+          <div class="answer-band">
+            <div class="answer">
+              <h4>Executive Answer</h4>
+              <p>
+                Marriott Bonvoy performs better for the sample high-spend traveller because its
+                normalized earn value and data quality are stronger. Hilton Honors performs better
+                on tier accessibility, but the sample shows higher review risk around recent-change
+                signals and missing comparable redemption data. Sentiment and churn signals should
+                be monitored before using this as a final client recommendation.
+              </p>
+            </div>
+            <aside class="side-score">
+              <h4>Comparison Status</h4>
+              <div class="score">
+                <div class="score-row"><span>Marriott quality</span><strong>86%</strong></div>
+                <div class="score-row"><span>Hilton quality</span><strong>79%</strong></div>
+                <div class="score-row"><span>Review flags</span><strong>2</strong></div>
+                <div class="score-row"><span>Final verdict</span><strong>Marriott edge</strong></div>
+              </div>
+            </aside>
+          </div>
+
+          <table class="comparison-table" aria-label="Comparison output table">
+            <thead>
+              <tr>
+                <th>Comparison Field</th>
+                <th>Marriott Bonvoy</th>
+                <th>Hilton Honors</th>
+                <th>What User Sees</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="value">Normalized earn value</td>
+                <td>10 pts/USD x 0.70 cpp = <strong>7.0 earn_cpp</strong></td>
+                <td>7 pts/USD x 0.50 cpp = <strong>3.5 earn_cpp</strong></td>
+                <td><span class="badge warn">Factual mismatch</span><div class="note">Real competitive difference.</div></td>
+              </tr>
+              <tr>
+                <td class="value">Tier accessibility</td>
+                <td>Platinum at 50 nights, Titanium at 75 nights</td>
+                <td>Gold at 40 nights, Diamond at 60 nights</td>
+                <td><span class="badge warn">Factual mismatch</span><div class="note">Hilton easier for mid-tier access.</div></td>
+              </tr>
+              <tr>
+                <td class="value">Free night threshold</td>
+                <td>Dynamic award pricing found in retrieved sources</td>
+                <td class="missing-cell">Comparable field not found in retrieved pages</td>
+                <td><span class="badge grey">Data gap</span><div class="note">Not treated as Hilton weakness.</div></td>
+              </tr>
+              <tr>
+                <td class="value">Recent devaluation signal</td>
+                <td>No strong recent conflict detected</td>
+                <td class="review-cell">Third-party trackers mention changes; official page does not clearly confirm</td>
+                <td><span class="badge danger">Human review required</span></td>
+              </tr>
+              <tr>
+                <td class="value">Public member sentiment</td>
+                <td>Mixed, with complaints around dynamic award pricing and perceived value decline</td>
+                <td>Mixed to negative, with complaints around benefit changes and redemption availability</td>
+                <td><span class="badge warn">Churn signal</span><div class="note">Both need monitoring, Hilton slightly weaker in this sample.</div></td>
+              </tr>
+              <tr>
+                <td class="value">Historical trend</td>
+                <td>Earn value appears more stable across retrieved year-over-year references</td>
+                <td class="review-cell">Possible weakening trend, but exact historical comparison needs manual verification</td>
+                <td><span class="badge danger">Human review required</span></td>
+              </tr>
+              <tr>
+                <td class="value">Program news signal</td>
+                <td>Recent coverage emphasizes portfolio updates and redemption changes</td>
+                <td>Recent coverage emphasizes benefit and earning-rule discussion</td>
+                <td><span class="badge warn">Watchlist</span></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="grid-3">
+            <div class="block">
+              <h4>Winner: Earn Value</h4>
+              <p><span class="value">Marriott Bonvoy</span></p>
+              <p class="note">Higher normalized earn_cpp in the sample output.</p>
+            </div>
+            <div class="block">
+              <h4>Winner: Tier Access</h4>
+              <p><span class="value">Hilton Honors</span></p>
+              <p class="note">Easier mid-tier path for less frequent travellers.</p>
+            </div>
+            <div class="block">
+              <h4>Review Before Client Use</h4>
+              <p><span class="value">Hilton trend and churn signal</span></p>
+              <p class="note">Needs manual verification using forums, social sentiment, and historical references.</p>
+            </div>
+          </div>
+
+          <div class="debate">
+            <div class="section-title" style="margin:0;">
+              <h2>Comparison Debate-Based Decision</h2>
+              <p>The system compares both programs through opposing agents, then creates a final category verdict.</p>
+            </div>
+            <span class="round-label">Step 1 - Agent 1 Opening Statement</span>
+            <div class="debate-card">
+              <div class="agent">Agent 1 (Marriott Advocate)</div>
+              <ul>
+                <li>Opening statement: Marriott performs better for high-spend travellers because the normalized earn value is stronger.</li>
+                <li>Evidence used: 10 pts/USD x 0.70 cpp = 7.0 earn_cpp.</li>
+                <li>Business meaning: higher spend compounds into more redeemable value over time.</li>
+              </ul>
+            </div>
+            <span class="round-label">Step 2 - Agent 2 Opening Statement</span>
+            <div class="debate-card">
+              <div class="agent">Agent 2 (Hilton Advocate)</div>
+              <ul>
+                <li>Opening statement: Hilton performs better for travellers who care about easier tier access.</li>
+                <li>Evidence used: Gold and Diamond qualification appears more accessible in the extracted tier data.</li>
+                <li>Business meaning: mid-frequency travellers may see status benefits sooner.</li>
+              </ul>
+            </div>
+            <span class="round-label">Step 3 - Agent 1 Contradiction</span>
+            <div class="debate-card">
+              <div class="agent">Agent 1 (Marriott Advocate)</div>
+              <p>
+                Contradiction: "Hilton's tier accessibility does not outweigh the earn-value gap for a high-spend business traveller.
+                The user's stated goal is high-spend performance, so earn value should carry more weight."
+              </p>
+            </div>
+            <span class="round-label">Step 4 - Agent 2 Contradiction</span>
+            <div class="debate-card">
+              <div class="agent">Agent 2 (Hilton Advocate)</div>
+              <p>
+                Contradiction: "Marriott's higher earn value depends on redemption assumptions. If the traveller values status benefits
+                more than point value, Hilton may perform better in practical experience."
+              </p>
+            </div>
+            <span class="round-label">Step 5 - Evidence Review</span>
+            <div class="debate-card">
+              <div class="agent">System Evidence Review</div>
+              <ul>
+                <li>Marriott free-night field found: dynamic pricing evidence available.</li>
+                <li>Hilton comparable free-night field: not found in retrieved pages.</li>
+                <li>Decision: mark as Data gap, not as a Hilton disadvantage.</li>
+                <li>Human review: Hilton trend, sentiment, and recent-change signals require manual verification before client use.</li>
+              </ul>
+            </div>
+            <span class="round-label">Step 6 - Final Review</span>
+            <div class="debate-card">
+              <div class="agent">Final Decision</div>
+              <ul>
+                <li>Overall winner for sample user goal: Marriott Bonvoy.</li>
+                <li>Why: stronger normalized earn value, higher data quality, and lower review risk in this sample.</li>
+                <li>Where Hilton performed better: tier accessibility.</li>
+                <li>Output label: Marriott performs better overall, Hilton performs better for tier access, Hilton churn/trend signals need human review.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="decision-grid">
+            <div class="decision-card">
+              <span>Earn value</span>
+              <strong>Marriott wins</strong>
+              <p>7.0 earn_cpp vs 3.5 earn_cpp in the sample extraction.</p>
+            </div>
+            <div class="decision-card">
+              <span>Tier access</span>
+              <strong>Hilton wins</strong>
+              <p>Better fit for mid-frequency travellers seeking faster status.</p>
+            </div>
+            <div class="decision-card">
+              <span>Data quality</span>
+              <strong>Marriott wins</strong>
+              <p>Higher field coverage and fewer review warnings.</p>
+            </div>
+            <div class="decision-card">
+              <span>Churn risk</span>
+              <strong>Marriott slightly better</strong>
+              <p>Hilton has stronger review warnings in sentiment and trend signals.</p>
+            </div>
+            <div class="decision-card">
+              <span>Program news</span>
+              <strong>Human review needed</strong>
+              <p>Recent updates require analyst confirmation before final client use.</p>
+            </div>
+            <div class="decision-card">
+              <span>Overall sample verdict</span>
+              <strong>Marriott performs better</strong>
+              <p>Best match for the high-spend business traveller prompt.</p>
+            </div>
+          </div>
+
+          <div class="winner">
+            <strong>Final Recommendation</strong>
+            <div>
+              Recommend Marriott Bonvoy for high-spend business travellers if earn value and current
+              performance stability are the main criteria. Add a caution note that Hilton may be better
+              for travellers who value easier tier access. Do not use Hilton churn, sentiment, or recent-change
+              claims in a client-facing report until manually verified.
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="shell">
+      Demo-only sample output for Innovative Iterators, RVCE Bengaluru. Values are illustrative placeholders for showing how the final system output will look.
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.streamlit/secrets.toml
+kobie.sqlite3
+Kobie_Phase2_ArcGuide_Updated.pdf
+.env
+streamlit*.log
