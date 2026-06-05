@@ -74,12 +74,15 @@ Extract: populate the 35+ field intelligence schema.
 Verify: score confidence, detect contradictions, and adjudicate conflicts.
 Narrate: generate a 500-1000 word analyst-grade brief.
 Compare: identify factual mismatches, missing data, gaps, and differentiation.
-Converse: answer follow-up questions from extracted JSON only.
+Compare mode: collect two program inputs, run the same single-program workflow
+for Program A and Program B independently, then compare the two completed states.
+Converse: answer follow-up questions from extracted JSON only after the final
+brief has been generated.
 
 AG-2 COMPONENT_NAMES
 Use Kobie's expected names in code and UI:
 Orchestrator, Retriever, Extractor, Verifier, Narrator, Comparator.
-Add Converse as the post-brief Q&A module.
+Add Converse only as the post-brief Q&A module, not as an initial input mode.
 
 AG-3 INPUT_VALIDATOR
 Responsibilities:
@@ -227,10 +230,14 @@ brief is 500-1000 words; each factual sentence maps to claim IDs.
 Comparison:
 factual_mismatch, missing_in_a, missing_in_b, manual_review_needed, and null are
 separate outcomes.
+Compare UI:
+accepts Input A and Input B in side-by-side cards. Each input must execute the
+same validation, retrieval, extraction, verification, and narration workflow used
+for a single program before any comparison display is generated.
 
 Converse:
-answers only from stored claim/brief JSON; absent data returns
-not_found/manual_review_needed.
+available after final output generation. It answers only from stored claim/brief
+JSON; absent data returns not_found/manual_review_needed.
 """
 
 
@@ -429,7 +436,7 @@ Orchestrator / LangGraph StateGraph
   |      adjudicated claims -> 500-1000 word analyst brief -> entailment check
   |
   +--> Comparator
-  |      two program states -> mismatch vs missing diff -> strategy gaps
+  |      two independently completed program states -> mismatch vs missing diff -> strategy gaps
   |
   +--> Converse
          follow-up questions answered only from stored extracted JSON and brief JSON
@@ -736,13 +743,14 @@ comparison.py
   -> imports schemas.py; field-level diff, mismatch vs missing logic, strategy gap output.
 
 converse.py
-  -> imports schemas.py, db.py, providers.py; Q&A over stored claims and brief_json.
+  -> imports schemas.py, db.py, providers.py; post-brief Q&A over stored claims and brief_json.
 
 graph.py
   -> imports all stage modules; LangGraph StateGraph, conditional routes, retries.
 
 app.py
-  -> imports graph.py, db.py; Streamlit UI for single, compare, and converse modes.
+  -> imports graph.py, db.py; Streamlit UI for single mode, side-by-side compare inputs,
+     and post-brief converse mode.
 """
 
 
@@ -859,7 +867,7 @@ def build_story(styles):
         Section(
             "1. Executive Summary",
             [
-                "The system must research loyalty programs autonomously without relying on LLM training memory. The updated architecture aligns with Kobie's six expected components: Orchestrator, Retriever, Extractor, Verifier, Narrator, and Comparator. This guide adds a seventh user-facing capability, Converse, which answers follow-up questions from the extracted dataset after a brief is generated.",
+                "The system must research loyalty programs autonomously without relying on LLM training memory. The updated architecture aligns with Kobie's six expected components: Orchestrator, Retriever, Extractor, Verifier, Narrator, and Comparator. Compare mode accepts two program inputs and runs the same single-program workflow independently for both before displaying differences. This guide adds a seventh user-facing capability, Converse, which answers follow-up questions from the extracted dataset after a brief is generated.",
                 "The most important engineering principle is grounded uncertainty. A false claim is worse than an empty field because the evaluation penalizes false information by -5. If the system searched for a field and cannot find support, it must emit not_found/manual_review_needed with source context where possible, earning partial credit and preserving analyst trust. A completely null field should be reserved for fields that were not searched or not applicable.",
             ],
             [
@@ -872,7 +880,7 @@ def build_story(styles):
         Section(
             "2. Scope And MVP Boundary",
             [
-                "The MVP is a reliable evidence pipeline, not a maximal chatbot. It must resolve the program identity, retrieve diverse sources, extract a structured 35+ field schema, verify claims, produce an analyst-grade 500-1000 word brief, compare two programs, and answer follow-up questions from the stored extracted data.",
+                "The MVP is a reliable evidence pipeline, not a maximal chatbot. It must resolve the program identity, retrieve diverse sources, extract a structured 35+ field schema, verify claims, produce an analyst-grade 500-1000 word brief, compare two independently completed program states, and answer follow-up questions from the stored extracted data after final output generation.",
                 "Stretch items include advanced freshness asymmetry, broader domain-specific sub-schemas, and a multi-agent strategic verdict. These should not block the core pipeline.",
             ],
         ),
@@ -1002,8 +1010,8 @@ def build_story(styles):
             [
                 "Narrator output must be 500-1000 words and suitable for an analyst's client-facing strategy deck.",
                 "Every factual sentence must map to claim IDs. Unsupported sentences are removed or rewritten as manual_review_needed.",
-                "Comparator must separate factual mismatch from missing/null/manual_review. Missing data is not the same as a strategic weakness.",
-                "Converse answers follow-up questions only from claim JSON and brief JSON. If the data is absent, it returns not_found/manual_review_needed with the missing field path.",
+                "Comparator must run after Program A and Program B each complete the same single-program workflow. It must separate factual mismatch from missing/null/manual_review. Missing data is not the same as a strategic weakness.",
+                "Converse is not part of the initial input section. It answers follow-up questions only after final output generation, using claim JSON and brief JSON. If the data is absent, it returns not_found/manual_review_needed with the missing field path.",
             ],
             styles,
         )
