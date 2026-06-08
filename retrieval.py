@@ -1,27 +1,137 @@
-"""Retrieval planning, quality gates, and chunking stubs."""
+"""Tavily URL retrieval and deduplication."""
 
 from __future__ import annotations
 
-from schemas import PageRef, ProgramIdentity, SearchQuery
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+import time
+from typing import Any, Protocol
+
+import requests
+
+from providers import provider_for_stage
+from schemas import RetrievalOutput, RetrievedUrl, SearchQuery
 
 
-SOURCE_TYPES = ("official", "terms", "faq", "partners", "app_reviews", "news", "forums")
+RESULTS_PER_QUERY = 5
 
 
-def build_search_queries(identity: ProgramIdentity) -> list[SearchQuery]:
-    name = identity.program_name
-    brand = identity.brand
-    return [
-        SearchQuery(query=f"{name} official loyalty program", source_type="official"),
-        SearchQuery(query=f"{name} terms and conditions", source_type="terms"),
-        SearchQuery(query=f"{name} earn redeem points FAQ", source_type="faq"),
-        SearchQuery(query=f"{name} partners {brand}", source_type="partners"),
-        SearchQuery(query=f"{name} app reviews rating", source_type="app_reviews"),
-        SearchQuery(query=f"{name} recent changes loyalty program", source_type="news"),
-        SearchQuery(query=f"{name} review forum complaints", source_type="forums"),
+class TavilyClient(Protocol):
+    def search(self, query: str, max_results: int = RESULTS_PER_QUERY) -> list[dict[str, Any]]:
+        """Return Tavily result dictionaries for one query."""
+
+
+class TavilyRestClient:
+    """Tavily Search API REST client."""
+
+    def __init__(self, max_retries: int = 2, retry_sleep_seconds: float = 1.0) -> None:
+        provider = provider_for_stage("retrieval_search")
+        self.api_base = provider.api_base or "https://api.tavily.com/search"
+        self.api_key = provider.api_key
+        self.max_retries = max_retries
+        self.retry_sleep_seconds = retry_sleep_seconds
+
+    def search(self, query: str, max_results: int = RESULTS_PER_QUERY) -> list[dict[str, Any]]:
+        if not self.api_key:
+            raise RuntimeError("Tavily retrieval is not configured. Set TAVILY_API_KEY.")
+
+        response = self._post_with_retries(query=query, max_results=max_results)
+        response.raise_for_status()
+        payload = response.json()
+        return payload.get("results", [])
+
+    def _post_with_retries(self, query: str, max_results: int) -> requests.Response:
+        last_error: requests.RequestException | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                return requests.post(
+                    self.api_base,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "query": query,
+                        "max_results": max_results,
+                        "search_depth": "advanced",
+                        "include_answer": False,
+                        "include_raw_content": False,
+                    },
+                    timeout=45,
+                )
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_sleep_seconds * (attempt + 1))
+
+        raise RuntimeError(
+            "Tavily retrieval could not reach api.tavily.com. Check internet access, "
+            "DNS resolution, firewall/VPN settings, and TAVILY_API_BASE."
+        ) from last_error
+
+
+def retrieve_urls(
+    queries: list[SearchQuery],
+    client: TavilyClient | None = None,
+    results_per_query: int = RESULTS_PER_QUERY,
+) -> RetrievalOutput:
+    tavily = client or TavilyRestClient()
+    deduped: dict[str, RetrievedUrl] = {}
+    raw_count = 0
+
+    for search_query in queries:
+        results = tavily.search(search_query.query, max_results=results_per_query)
+        raw_count += len(results)
+        for result in results[:results_per_query]:
+            url = str(result.get("url") or "").strip()
+            if not url:
+                continue
+            canonical = canonicalize_url(url)
+            score = normalize_score(result.get("score"))
+            candidate = RetrievedUrl(
+                url=url,
+                canonical_url=canonical,
+                title=result.get("title"),
+                score=score,
+                query=search_query.query,
+                query_id=search_query.query_id,
+                external_query_id=search_query.external_query_id,
+                source_type=search_query.source_type,
+            )
+
+            existing = deduped.get(canonical)
+            if existing is None or candidate.score > existing.score:
+                deduped[canonical] = candidate
+
+    urls = sorted(deduped.values(), key=lambda item: item.score, reverse=True)
+    return RetrievalOutput(
+        total_queries=len(queries),
+        requested_results_per_query=results_per_query,
+        raw_result_count=raw_count,
+        unique_result_count=len(urls),
+        urls=urls,
+    )
+
+
+def canonicalize_url(url: str) -> str:
+    parsed = urlsplit(url.strip())
+    scheme = (parsed.scheme or "https").lower()
+    netloc = parsed.netloc.lower()
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+
+    path = parsed.path.rstrip("/") or "/"
+    query_pairs = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_") and key.lower() not in {"fbclid", "gclid"}
     ]
+    query = urlencode(query_pairs, doseq=True)
+    return urlunsplit((scheme, netloc, path, query, ""))
 
 
-def passes_zero_result_gate(pages: list[PageRef]) -> bool:
-    usable = [page for page in pages if page.token_count > 150 and page.cleaned_text.strip()]
-    return len(usable) >= 2
+def normalize_score(value: object) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, score))

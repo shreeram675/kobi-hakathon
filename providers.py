@@ -34,7 +34,7 @@ class ProviderConfig:
     def api_key(self) -> str | None:
         if not self.api_key_env:
             return None
-        value = os.getenv(self.api_key_env) or os.getenv("GROQ_API_KEY")
+        value = os.getenv(self.api_key_env)
         if not value or value.startswith("your_"):
             return None
         return value
@@ -57,8 +57,16 @@ STAGE_PROVIDERS: dict[str, ProviderConfig] = {
         api_key_env="GEMINI_API_KEY",
         api_base_env="GEMINI_API_BASE",
     ),
-    "retrieval_search": ProviderConfig("tavily", api_key_env="TAVILY_API_KEY"),
-    "retrieval_fetch": ProviderConfig("firecrawl-or-jina", api_key_env="FIRECRAWL_API_KEY"),
+    "retrieval_search": ProviderConfig(
+        "tavily",
+        api_key_env="TAVILY_API_KEY",
+        api_base_env="TAVILY_API_BASE",
+    ),
+    "retrieval_fetch": ProviderConfig(
+        "firecrawl",
+        api_key_env="FIRECRAWL_API_KEY",
+        api_base_env="FIRECRAWL_API_BASE",
+    ),
     "extraction": ProviderConfig("gemini", model="gemini-2.5-flash", api_key_env="GEMINI_API_KEY"),
     "verification": ProviderConfig("gemini", model="gemini-2.5-flash", api_key_env="GEMINI_API_KEY"),
     "narration": ProviderConfig("gemini", model="gemini-2.5-flash", api_key_env="GEMINI_API_KEY"),

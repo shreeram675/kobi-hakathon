@@ -155,15 +155,57 @@ class ValidationResult(KobieModel):
 
 class SearchQuery(KobieModel):
     query_id: str = Field(default_factory=lambda: new_id("query"))
+    external_query_id: str | None = None
     query: str
     source_type: str
+    intent: str | None = None
+    target_fields: list[str] = Field(default_factory=list)
 
 
 class QueryGenerationOutput(KobieModel):
     detected_category: str
+    resolved_corporate_parent: str | None = None
+    geography: str | None = None
     query_strategy_summary: str
     priority_fields: list[str] = Field(default_factory=list)
+    estimated_web_coverage: float = Field(default=0.0, ge=0, le=1)
+    field_query_map: dict[str, list[str]] = Field(default_factory=dict)
     queries: list[SearchQuery] = Field(default_factory=list, max_length=15)
+
+
+class RetrievedUrl(KobieModel):
+    url: str
+    canonical_url: str
+    title: str | None = None
+    score: float = Field(ge=0, le=1)
+    query: str
+    query_id: str | None = None
+    external_query_id: str | None = None
+    source_type: str
+
+
+class RetrievalOutput(KobieModel):
+    total_queries: int
+    requested_results_per_query: int = 5
+    raw_result_count: int
+    unique_result_count: int
+    urls: list[RetrievedUrl] = Field(default_factory=list)
+
+
+class ScrapedUrlBlock(KobieModel):
+    url: str
+    canonical_url: str
+    content: str | None = None
+    title: str | None = None
+    scrape_status: Literal["success", "failed"] = "success"
+    error: str | None = None
+
+
+class FirecrawlScrapeOutput(KobieModel):
+    total_urls: int
+    successful_scrapes: int
+    failed_scrapes: int
+    blocks: list[ScrapedUrlBlock] = Field(default_factory=list)
 
 
 class PageRef(KobieModel):
@@ -284,6 +326,10 @@ class AgentState(TypedDict):
     country_or_region: str | None
     query_generation_result: QueryGenerationOutput | None
     search_queries: list[SearchQuery]
+    retrieval_result: RetrievalOutput | None
+    retrieved_urls: list[RetrievedUrl]
+    firecrawl_result: FirecrawlScrapeOutput | None
+    scraped_blocks: list[ScrapedUrlBlock]
     retrieved_pages: list[PageRef]
     sanitized_chunks: list[ChunkRef]
     extracted_claims: list[Claim]
@@ -314,6 +360,10 @@ def build_initial_state(user_input: str, mode: RunMode = RunMode.SINGLE) -> Agen
         "country_or_region": None,
         "query_generation_result": None,
         "search_queries": [],
+        "retrieval_result": None,
+        "retrieved_urls": [],
+        "firecrawl_result": None,
+        "scraped_blocks": [],
         "retrieved_pages": [],
         "sanitized_chunks": [],
         "extracted_claims": [],

@@ -14,78 +14,194 @@ from schemas import ProgramIdentity, QueryGenerationOutput, SearchQuery
 
 
 QUERY_GENERATOR_SYSTEM_PROMPT = """
-You are an expert Loyalty Program Research Query Generator.
+You are the Kobie Loyalty Program Research Query Planner.
 
-Your objective is to generate the most effective Tavily search queries for
-extracting information about a loyalty program while maximizing coverage of the
-required schema.
+Your objective is to generate the smallest possible set of high-information-gain
+Tavily search queries that maximize loyalty-program intelligence coverage while
+minimizing API cost and duplicate retrieval.
 
 INPUT
-You receive a validated loyalty program identity:
 {
-  "program_name": "...",
-  "brand": "...",
-  "domain": "...",
-  "country_or_region": "..."
+  "program_name": "<program_name>",
+  "brand": "<brand>",
+  "domain": "<optional_domain>",
+  "country_or_region": "<optional: IN | US | UK | GLOBAL>"
 }
 
-REQUIRED SCHEMA
-1. Program Basics: Name, Brand, Industry, Type, Geography, Membership Count
-2. Earn Mechanics: Base Earn Rate, Bonus Categories, Non-Transactional Earn
-3. Burn Mechanics: Redemption Options, Redemption Thresholds, Point Value, Expiry Policy
-4. Tier System: Tier Names, Qualification Criteria, Benefits, Qualification Period
-5. Partnerships: Partner Names, Partnership Type, Partnership Details
-6. Digital Experience: Mobile App, App Ratings, Personalization, Gamification
-7. Member Sentiment: Ratings, Common Praise, Common Complaints, Sources Checked
-8. Competitive Position: Key Differentiators, Weaknesses, Closest Competitors
+EXECUTION RULES
+1. Resolve the loyalty program category before generating queries.
 
-FIELD DIFFICULTY
-Easy fields: Name, Brand, Industry, Type, Geography, Tier Names, Benefits,
-Mobile App, Redemption Options, Expiry Policy.
+Examples:
+Marriott Bonvoy -> HOTEL
+Hilton Honors -> HOTEL
+World of Hyatt -> HOTEL
+Air India Maharaja Club -> AIRLINE
+SkyMiles -> AIRLINE
+AAdvantage -> AIRLINE
+HDFC SmartBuy -> BANKING
+SBI Card Rewards -> BANKING
+Starbucks Rewards -> RETAIL
+Tata Neu -> COALITION
+InterMiles -> COALITION [NOT travel - earns across airlines, hotels, retail]
+Nectar -> COALITION
+Flipkart SuperCoins -> E-COMMERCE
 
-Difficult fields: Membership Count, Base Earn Rate, Bonus Categories,
-Qualification Criteria, Qualification Period, Redemption Thresholds, App
-Ratings, Partner Names.
+2. Resolve the corporate parent whenever known.
 
-Very difficult fields: Point Value, Non-Transactional Earn, Partnership Type,
-Partnership Details, Personalization, Gamification, Member Sentiment, Common
-Praise, Common Complaints, Key Differentiators, Weaknesses, Closest Competitors.
+Examples:
+Marriott Bonvoy -> Marriott International
+Hilton Honors -> Hilton Worldwide
+Air India Maharaja Club -> Air India Limited
+SkyMiles -> Delta Air Lines
+AAdvantage -> American Airlines Group
+HDFC SmartBuy -> HDFC Bank
+SBI Card Rewards -> SBI Cards and Payment Services
+Starbucks Rewards -> Starbucks Corporation
+Nectar -> Nectar360 / Sainsbury's
+Tata Neu -> Tata Digital / Tata Sons
+InterMiles -> InterMiles (formerly Jet Privilege)
 
-QUERY RULES
-1. Generate at most 15 Tavily search queries.
-2. Prioritize difficult and very difficult fields.
-3. Every query should target multiple schema fields whenever possible.
-4. Use category-specific terminology from the validated domain.
-5. Prefer official sources for factual information.
-6. Prefer community and review sources for sentiment analysis.
-7. Generate discovery-style queries for fields that are rarely published directly.
-8. Minimize overlap and redundancy.
-9. Queries should uncover hidden rules, valuation data, partner ecosystems, user
-   sentiment, and competitive positioning.
-10. Do not generate unsupported facts. Queries are search strings only.
+3. If the input domain is provided, it overrides the inferred category. The
+   final detected_category must preserve the validated input domain/category
+   instead of drifting to Other.
 
-SOURCE PREFERENCES
-For factual information: official website, program FAQ, terms and conditions,
-benefits pages, partner pages, annual reports, investor presentations.
+4. Generate only 9-15 queries. Fewer for low-web-presence programs. More for
+   major global programs.
 
-For sentiment and competitive analysis: Reddit, FlyerTalk, Trustpilot, Google
-Play, Apple App Store, loyalty blogs, comparison articles, industry reports.
+5. Every query must contain either the exact program name or the resolved
+   corporate parent.
 
-OUTPUT FORMAT
-Return ONLY valid JSON:
+6. Queries must be concise search phrases:
+   - Preferred: 3-7 words
+   - Maximum: 10 words
+   - No conversational language
+   - No questions
+   - No placeholders
+
+7. One query = one intent.
+
+DOMAIN TERMINOLOGY
+AIRLINE: award chart, elite status, alliance partners, mileage valuation, cpp,
+tier points, mileage expiry, award redemption.
+
+HOTEL: elite nights, suite upgrades, dynamic pricing, property categories,
+points per night, free night certificate, points expiry.
+
+BANKING: transfer partners, lounge access, cents per point, statement credit,
+reward rate, milestone benefits.
+
+RETAIL: cashback value, partner ecosystem, redemption network, referral rewards,
+points per purchase.
+
+COALITION: issuance partners, earn partners, redeem partners, partner ecosystem,
+redemption network, points transfer, coalition members.
+
+REQUIRED RESEARCH VECTORS
+Generate coverage across all of these:
+1. Program Rules (T&C, FAQ)
+2. Earn Mechanics (base earn, bonus categories)
+3. Tier Structure (names, thresholds, qualification criteria)
+4. Redemption Value (cpp, award chart, thresholds)
+5. Consumer Partnerships (earn/burn/both, partner list)
+6. Recent Changes / Devaluations (last 12 months)
+7. Historical Identity / Rebrands / Mergers
+8. Membership Scale / Loyalty Liability
+9. Customer Sentiment (complaints, praise)
+10. Competitive Position (vs. closest competitor)
+
+NOTE on Technology Discovery:
+Loyalty platform vendor information is rarely on public web pages. Only
+generate a technology query if the program is known to have public
+announcements in press releases or trade publications. Accept null for this
+field rather than wasting queries.
+
+SENTIMENT ROUTING
+AIRLINE / HOTEL:
+Primary: site:flyertalk.com [program] [topic]
+         site:reddit.com [program] [topic]
+Topics: complaints, devaluation, worth it, redemption sweet spots
+
+BANKING / CREDIT CARD:
+Primary: site:reddit.com [program] review
+         site:trustpilot.com [program]
+Indian programs also:
+         site:technofino.com [program]
+         site:reddit.com/r/CreditCardsIndia [program]
+
+RETAIL / E-COMMERCE / COALITION:
+Primary: [program] app reviews Google Play
+         [program] app reviews Apple App Store
+         site:reddit.com [program] complaints
+         site:trustpilot.com [program]
+Indian programs also:
+         site:cardexpert.in [program]
+         site:reddit.com/r/IndiaInvestments [program]
+
+INDIA-SPECIFIC SOURCES when geography = IN:
+News: [program] site:economictimes.indiatimes.com
+      [program] members announcement Mint
+Analysis: site:technofino.com OR site:cardexpert.in [program]
+Sentiment: site:reddit.com/r/CreditCardsIndia OR r/IndiaInvestments
+
+MEMBERSHIP SCALE QUERIES
+Public companies:
+"[corporate parent] loyalty members active annual report"
+"[corporate parent] loyalty liability deferred revenue"
+"[corporate parent] investor presentation loyalty program"
+
+Private companies:
+"[corporate parent] annual report loyalty members"
+"[corporate parent] bond prospectus loyalty program"
+
+PRIORITY FIELDS BY CATEGORY
+HOTEL: tier_structure, elite_nights, redemption_value, transfer_partners
+AIRLINE: award_chart, alliance_partners, elite_status, mileage_valuation
+BANKING: transfer_partners, lounge_access, reward_rate, points_value
+RETAIL: cashback_value, partner_ecosystem, earn_mechanics, expiry_policy
+COALITION: issuance_partners, redemption_network, partner_ecosystem
+
+FIELD-QUERY MAPPING
+In the output, map each priority field to the query IDs most likely to retrieve
+it. This enables the downstream extractor to run targeted extraction per page
+rather than full schema extraction on every page.
+
+OUTPUT
+Return ONLY valid JSON. No explanation. No markdown.
+
 {
-  "detected_category": "<category>",
-  "query_strategy_summary": "<brief explanation>",
-  "priority_fields": ["<field>", "<field>"],
+  "detected_category": "",
+  "resolved_corporate_parent": "",
+  "geography": "",
+  "priority_fields": [],
+  "query_strategy_summary": "",
+  "estimated_web_coverage": 0.0,
+  "field_query_map": {
+    "earn_rate_base": ["Q01", "Q02"],
+    "point_value": ["Q03"],
+    "tier_structure": ["Q04", "Q05"],
+    "member_sentiment": ["Q09", "Q10"],
+    "partnerships": ["Q06", "Q07"],
+    "competitive_position": ["Q08"]
+  },
   "queries": [
-    {"query": "...", "source_type": "official"},
-    {"query": "...", "source_type": "terms"},
-    {"query": "...", "source_type": "partners"}
+    {
+      "query_id": "Q01",
+      "query": "",
+      "intent": "",
+      "target_fields": ["earn_rate_base", "bonus_categories"],
+      "source_type": "official"
+    }
   ]
 }
 
-Allowed source_type values: official, terms, faq, partners, app_reviews, news,
-forums, sentiment, competitors, valuation, reports.
+VALIDATION RULES checked by the calling system:
+- query count < 9 or > 15 is invalid
+- any query over 10 words is invalid
+- any placeholder in output is invalid
+- field_query_map must not be empty
+- at least one query must target sentiment
+- at least one query must target competitive position
+- at least one query must target financial/membership scale
 """.strip()
 
 
@@ -155,38 +271,95 @@ def generate_queries(
 ) -> QueryGenerationOutput:
     generator = client or GeminiQueryGeneratorClient()
     payload = generator.complete_json(build_query_generator_prompt(identity))
-    return parse_query_generation_output(payload)
+    return parse_query_generation_output(payload, identity=identity)
 
 
 def build_query_generator_prompt(identity: ProgramIdentity) -> str:
+    prompt_identity = {
+        "program_name": identity.program_name,
+        "brand": identity.brand,
+        "domain": identity.domain,
+        "country_or_region": identity.country_or_region or "GLOBAL",
+    }
     return (
         f"{QUERY_GENERATOR_SYSTEM_PROMPT}\n\n"
         "VALIDATED PROGRAM IDENTITY\n"
-        f"{json.dumps(identity.model_dump(), indent=2, ensure_ascii=True)}"
+        f"{json.dumps(prompt_identity, indent=2, ensure_ascii=True)}"
     )
 
 
-def parse_query_generation_output(payload: dict[str, Any]) -> QueryGenerationOutput:
+def parse_query_generation_output(
+    payload: dict[str, Any],
+    identity: ProgramIdentity | None = None,
+) -> QueryGenerationOutput:
     queries: list[SearchQuery] = []
     for item in payload.get("queries", [])[:15]:
         if isinstance(item, str):
             query = item.strip()
             source_type = infer_source_type(query)
+            external_query_id = None
+            intent = None
+            target_fields: list[str] = []
         elif isinstance(item, dict):
             query = str(item.get("query") or "").strip()
             source_type = str(item.get("source_type") or infer_source_type(query)).strip()
+            external_query_id = item.get("query_id")
+            intent = item.get("intent")
+            target_fields = [str(field) for field in item.get("target_fields", [])]
         else:
             continue
 
         if query:
-            queries.append(SearchQuery(query=query, source_type=source_type or "official"))
+            query_kwargs: dict[str, Any] = {
+                "query": query,
+                "source_type": source_type or "official",
+                "intent": str(intent) if intent else None,
+                "target_fields": target_fields,
+            }
+            if external_query_id:
+                query_kwargs["external_query_id"] = str(external_query_id)
+            queries.append(SearchQuery(**query_kwargs))
+
+    external_to_internal = {
+        query.external_query_id: query.query_id
+        for query in queries
+        if query.external_query_id
+    }
+
+    detected_category = str(payload.get("detected_category") or "").strip()
+    if identity and identity.domain:
+        detected_category = identity.domain
 
     return QueryGenerationOutput(
-        detected_category=str(payload.get("detected_category") or "Other"),
+        detected_category=detected_category or "Other",
+        resolved_corporate_parent=empty_to_none(payload.get("resolved_corporate_parent")),
+        geography=empty_to_none(payload.get("geography")) or (identity.country_or_region if identity else None),
         query_strategy_summary=str(payload.get("query_strategy_summary") or "Generated Tavily query plan."),
         priority_fields=[str(field) for field in payload.get("priority_fields", [])],
+        estimated_web_coverage=normalize_coverage(payload.get("estimated_web_coverage")),
+        field_query_map={
+            str(field): [
+                external_to_internal.get(str(query_id), str(query_id))
+                for query_id in query_ids
+            ]
+            for field, query_ids in (payload.get("field_query_map") or {}).items()
+            if isinstance(query_ids, list)
+        },
         queries=queries,
     )
+
+
+def empty_to_none(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def normalize_coverage(value: object) -> float:
+    try:
+        coverage = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, coverage))
 
 
 def parse_json_content(content: str) -> dict[str, Any]:
