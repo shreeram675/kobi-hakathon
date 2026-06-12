@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import os
 from typing import Literal
 
 from langgraph.graph import END, START, StateGraph
 
 from firecrawl_scraper import scrape_retrieved_urls
+from pipeline.nodes.ingest_node import ingest_node as post_firecrawl_ingest_node
 from query_generator import generate_queries
 from retrieval import retrieve_urls
 from schemas import AgentState, PipelineError, build_initial_state, now_iso
@@ -108,7 +110,7 @@ def retrieval_node(state: AgentState) -> dict:
 
 
 def firecrawl_node(state: AgentState) -> dict:
-    urls = state.get("retrieved_urls", [])
+    urls = select_urls_for_firecrawl(state.get("retrieved_urls", []))
     if not urls:
         return {
             "errors": [
@@ -129,6 +131,9 @@ def firecrawl_node(state: AgentState) -> dict:
             "updated_at": now_iso(),
         }
 
+    all_failed = firecrawl_result.total_urls > 0 and firecrawl_result.successful_scrapes == 0
+    failed_message = _firecrawl_all_failed_message(firecrawl_result) if all_failed else None
+
     return {
         "firecrawl_result": firecrawl_result,
         "scraped_blocks": firecrawl_result.blocks,
@@ -138,18 +143,28 @@ def firecrawl_node(state: AgentState) -> dict:
                 [
                     PipelineError(
                         stage="firecrawl_scraper",
-                        message=(
-                            "Firecrawl failed for every retrieved URL. Check FIRECRAWL_API_KEY, "
-                            "FIRECRAWL_API_BASE, and Firecrawl plan/access permissions."
-                        ),
+                        message=failed_message or "Firecrawl failed for every retrieved URL.",
                     )
                 ]
-                if firecrawl_result.total_urls > 0 and firecrawl_result.successful_scrapes == 0
+                if all_failed
                 else []
             ),
         ],
         "updated_at": now_iso(),
     }
+
+
+def ingest_node(state: AgentState) -> dict:
+    try:
+        return post_firecrawl_ingest_node(state)
+    except Exception as exc:
+        return {
+            "errors": [
+                *state["errors"],
+                PipelineError(stage="ingest", message=str(exc)),
+            ],
+            "updated_at": now_iso(),
+        }
 
 
 def build_kobie_graph():
@@ -158,6 +173,7 @@ def build_kobie_graph():
     graph.add_node("query_generator", query_generator_node)
     graph.add_node("retrieval", retrieval_node)
     graph.add_node("firecrawl_scraper", firecrawl_node)
+    graph.add_node("ingest", ingest_node)
     graph.add_edge(START, "input_validator")
     graph.add_conditional_edges(
         "input_validator",
@@ -166,7 +182,8 @@ def build_kobie_graph():
     )
     graph.add_edge("query_generator", "retrieval")
     graph.add_edge("retrieval", "firecrawl_scraper")
-    graph.add_edge("firecrawl_scraper", END)
+    graph.add_edge("firecrawl_scraper", "ingest")
+    graph.add_edge("ingest", END)
     return graph.compile()
 
 
@@ -227,14 +244,27 @@ def run_validation_chat_traced(
         emit("retrieval", "error", _latest_error_message(state, "Retrieval failed."))
         return state
 
-    emit("firecrawl_scraper", "running", "Scraping URLs and extracting per-URL schema fields.")
+    emit("firecrawl_scraper", "running", "Scraping URLs into raw markdown blocks.")
     state = {**state, **firecrawl_node(state)}
     if state.get("firecrawl_result") and state["firecrawl_result"].successful_scrapes > 0:
         emit("firecrawl_scraper", "complete", "Per-URL scrape blocks are ready.")
     elif state.get("firecrawl_result"):
         emit("firecrawl_scraper", "error", _latest_error_message(state, "Firecrawl failed for every URL."))
+        return state
     else:
         emit("firecrawl_scraper", "error", _latest_error_message(state, "Firecrawl scraping failed."))
+        return state
+
+    emit("ingest", "running", "Storing, chunking, extracting, and normalizing scraped evidence.")
+    state = {**state, **ingest_node(state)}
+    if state.get("normalized_packets"):
+        emit("ingest", "complete", "Normalized object packets are ready.")
+    elif state.get("semantic_chunks"):
+        emit("ingest", "waiting", "Chunks are ready, but no explicit schema facts were extracted.")
+    elif state.get("raw_documents"):
+        emit("ingest", "waiting", "Raw documents are stored, but no semantic chunks were produced.")
+    else:
+        emit("ingest", "waiting", "No usable raw documents were stored after Firecrawl.")
     return state
 
 
@@ -250,6 +280,60 @@ def run_firecrawl(state: AgentState) -> AgentState:
     return {**state, **firecrawl_node(state)}
 
 
+def run_ingest(state: AgentState) -> AgentState:
+    return {**state, **ingest_node(state)}
+
+
 def _latest_error_message(state: AgentState, fallback: str) -> str:
     errors = state.get("errors", [])
     return errors[-1].message if errors else fallback
+
+
+def select_urls_for_firecrawl(urls) -> list:
+    """Limit Firecrawl spend to the highest-value retrieved URLs."""
+
+    max_urls = _env_int("MAX_FIRECRAWL_URLS", 12)
+    if max_urls <= 0:
+        return urls
+
+    priority = {
+        "official": 0,
+        "terms": 1,
+        "faq": 2,
+        "partners": 3,
+        "valuation": 4,
+        "app_reviews": 5,
+        "forums": 6,
+        "competitors": 7,
+        "news": 8,
+    }
+    return sorted(
+        urls,
+        key=lambda item: (priority.get(str(item.source_type).lower(), 50), -float(item.score or 0)),
+    )[:max_urls]
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _firecrawl_all_failed_message(firecrawl_result) -> str:
+    errors = [block.error for block in firecrawl_result.blocks if block.error]
+    if not errors:
+        return "Firecrawl failed for every retrieved URL."
+
+    first_error = errors[0]
+    if "Insufficient Credits" in first_error or "Insufficient credits" in first_error:
+        return (
+            "Firecrawl credentials are valid, but Firecrawl returned insufficient credits. "
+            "Add credits or upgrade the Firecrawl plan, then retry."
+        )
+    if "403 Forbidden" in first_error:
+        return (
+            "Firecrawl returned 403 Forbidden for every URL. Check Firecrawl plan permissions, "
+            "workspace access, and FIRECRAWL_API_BASE."
+        )
+    return f"Firecrawl failed for every URL. First error: {first_error}"

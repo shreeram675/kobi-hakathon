@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Any, Protocol
@@ -210,15 +211,22 @@ class QueryGeneratorClient(Protocol):
         """Return the query generator response parsed as JSON."""
 
 
+TRANSIENT_GEMINI_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
 class GeminiQueryGeneratorClient:
     """Google Gemini generateContent REST client."""
 
-    def __init__(self, max_retries: int = 3, retry_sleep_seconds: float = 1.0) -> None:
+    def __init__(self, max_retries: int | None = None, retry_sleep_seconds: float = 1.0) -> None:
         provider = provider_for_stage("query_generator")
         self.api_base = (provider.api_base or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
         self.api_key = provider.api_key
         self.model = provider.resolved_model or "gemini-2.5-flash"
-        self.max_retries = max_retries
+        self.models = _ordered_models(
+            self.model,
+            _fallback_models_env("QUERY_GENERATOR_FALLBACK_MODELS", "gemini-2.5-flash-lite"),
+        )
+        self.max_retries = max_retries if max_retries is not None else _env_int("QUERY_GENERATOR_MAX_RETRIES", 2)
         self.retry_sleep_seconds = retry_sleep_seconds
 
     def complete_json(self, prompt: str) -> dict[str, Any]:
@@ -232,33 +240,38 @@ class GeminiQueryGeneratorClient:
 
     def _post_with_retries(self, prompt: str) -> requests.Response:
         last_error: requests.HTTPError | None = None
-        for attempt in range(self.max_retries + 1):
-            response = requests.post(
-                f"{self.api_base}/models/{self.model}:generateContent",
-                headers={
-                    "x-goog-api-key": self.api_key,
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {
+        for model_index, model in enumerate(self.models):
+            for attempt in range(self.max_retries + 1):
+                response = requests.post(
+                    f"{self.api_base}/models/{model}:generateContent",
+                    headers={
+                        "x-goog-api-key": self.api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {
                         "temperature": 0.2,
                         "responseMimeType": "application/json",
+                        "thinkingConfig": {"thinkingBudget": 0},
                     },
                 },
-                timeout=60,
-            )
-            if response.status_code not in {429, 500, 502, 503, 504}:
-                response.raise_for_status()
-                return response
+                    timeout=60,
+                )
+                if response.status_code not in TRANSIENT_GEMINI_STATUS_CODES:
+                    response.raise_for_status()
+                    self.model = model
+                    return response
 
-            last_error = requests.HTTPError(
-                f"Gemini query generator is temporarily unavailable "
-                f"({response.status_code}). Try again in a moment.",
-                response=response,
-            )
-            if attempt < self.max_retries:
-                time.sleep(self.retry_sleep_seconds * (attempt + 1))
+                last_error = requests.HTTPError(
+                    f"Gemini query generator is temporarily unavailable "
+                    f"({response.status_code}) for model {model}.",
+                    response=response,
+                )
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_sleep_seconds * (attempt + 1))
+            if model_index + 1 < len(self.models):
+                time.sleep(self.retry_sleep_seconds)
 
         if last_error:
             raise last_error
@@ -270,8 +283,58 @@ def generate_queries(
     client: QueryGeneratorClient | None = None,
 ) -> QueryGenerationOutput:
     generator = client or GeminiQueryGeneratorClient()
-    payload = generator.complete_json(build_query_generator_prompt(identity))
+    try:
+        payload = generator.complete_json(build_query_generator_prompt(identity))
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        if _local_fallback_enabled() and status_code in TRANSIENT_GEMINI_STATUS_CODES:
+            return build_local_query_generation_output(identity, reason=f"Gemini returned {status_code}")
+        raise
     return parse_query_generation_output(payload, identity=identity)
+
+
+def build_local_query_generation_output(identity: ProgramIdentity, reason: str) -> QueryGenerationOutput:
+    """Create a conservative Tavily query plan when Gemini is rate-limited."""
+
+    program = identity.program_name.strip()
+    brand = identity.brand.strip()
+    subject = _query_subject(program, brand)
+    geography = identity.country_or_region or "GLOBAL"
+    domain = identity.domain or "Other"
+    templates = _domain_query_templates(domain, geography)
+    queries: list[SearchQuery] = []
+
+    for index, template in enumerate(templates, start=1):
+        query = _compact_query(f"{subject} {template['suffix']}")
+        queries.append(
+            SearchQuery(
+                external_query_id=f"Q{index:02d}",
+                query=query,
+                intent=template["intent"],
+                target_fields=template["target_fields"],
+                source_type=template["source_type"],
+            )
+        )
+
+    external_to_internal = {query.external_query_id: query.query_id for query in queries if query.external_query_id}
+    field_query_map: dict[str, list[str]] = {}
+    for query in queries:
+        for field in query.target_fields:
+            field_query_map.setdefault(field, []).append(external_to_internal[query.external_query_id])
+
+    return QueryGenerationOutput(
+        detected_category=domain,
+        resolved_corporate_parent=brand or None,
+        geography=geography,
+        query_strategy_summary=(
+            f"Generated a local fallback query plan because {reason}. "
+            "Gemini key validation is separate from rate limits and quota."
+        ),
+        priority_fields=_priority_fields_for_domain(domain),
+        estimated_web_coverage=0.55,
+        field_query_map=field_query_map,
+        queries=queries,
+    )
 
 
 def build_query_generator_prompt(identity: ProgramIdentity) -> str:
@@ -370,6 +433,177 @@ def parse_json_content(content: str) -> dict[str, Any]:
         if not match:
             raise
         return json.loads(match.group(0))
+
+
+def _domain_query_templates(domain: str, geography: str) -> list[dict[str, Any]]:
+    domain_lower = domain.lower()
+    templates = [
+        {
+            "suffix": "terms conditions",
+            "intent": "official program rules",
+            "target_fields": ["earn_rate_base", "expiry_policy"],
+            "source_type": "terms",
+        },
+        {
+            "suffix": "FAQ benefits",
+            "intent": "official FAQ and member benefits",
+            "target_fields": ["tier_structure", "redemption_options"],
+            "source_type": "faq",
+        },
+        {
+            "suffix": "earn points bonus categories",
+            "intent": "earn mechanics",
+            "target_fields": ["earn_rate_base", "bonus_categories"],
+            "source_type": "official",
+        },
+        {
+            "suffix": "redeem points value",
+            "intent": "redemption value",
+            "target_fields": ["point_value", "redemption_thresholds"],
+            "source_type": "valuation",
+        },
+        {
+            "suffix": "partners transfer redemption",
+            "intent": "partner ecosystem",
+            "target_fields": ["partnerships", "transfer_partners"],
+            "source_type": "partners",
+        },
+        {
+            "suffix": "recent changes devaluation",
+            "intent": "recent changes and devaluations",
+            "target_fields": ["recent_changes_last_6_months"],
+            "source_type": "news",
+        },
+        {
+            "suffix": "members annual report liability",
+            "intent": "membership scale and loyalty liability",
+            "target_fields": ["membership_count", "loyalty_liability"],
+            "source_type": "news",
+        },
+        {
+            "suffix": "reddit complaints review",
+            "intent": "member sentiment",
+            "target_fields": ["member_sentiment", "common_complaints"],
+            "source_type": "forums",
+        },
+        {
+            "suffix": "competitors comparison value",
+            "intent": "competitive position",
+            "target_fields": ["competitive_position", "closest_competitors"],
+            "source_type": "competitors",
+        },
+    ]
+
+    if "airline" in domain_lower:
+        templates.insert(
+            3,
+            {
+                "suffix": "elite status award chart",
+                "intent": "airline tier and award rules",
+                "target_fields": ["tier_structure", "award_chart", "elite_status"],
+                "source_type": "official",
+            },
+        )
+    elif "hotel" in domain_lower:
+        templates.insert(
+            3,
+            {
+                "suffix": "elite nights points per night",
+                "intent": "hotel tier and redemption rules",
+                "target_fields": ["tier_structure", "elite_nights", "redemption_value"],
+                "source_type": "official",
+            },
+        )
+    elif "bank" in domain_lower or "credit" in domain_lower:
+        templates.insert(
+            3,
+            {
+                "suffix": "lounge access reward rate",
+                "intent": "banking card benefits",
+                "target_fields": ["lounge_access", "reward_rate"],
+                "source_type": "official",
+            },
+        )
+    elif "retail" in domain_lower or "commerce" in domain_lower:
+        templates.insert(
+            3,
+            {
+                "suffix": "app reviews cashback value",
+                "intent": "retail app and cashback value",
+                "target_fields": ["app_store_rating", "cashback_value"],
+                "source_type": "app_reviews",
+            },
+        )
+    else:
+        templates.insert(
+            3,
+            {
+                "suffix": "partner ecosystem redemption network",
+                "intent": "coalition partner network",
+                "target_fields": ["partner_ecosystem", "redemption_network"],
+                "source_type": "partners",
+            },
+        )
+
+    if geography.lower() in {"india", "in"}:
+        templates.append(
+            {
+                "suffix": "Technofino CardExpert review",
+                "intent": "India-specific expert analysis",
+                "target_fields": ["member_sentiment", "competitive_position"],
+                "source_type": "forums",
+            }
+        )
+
+    return templates[:10]
+
+
+def _priority_fields_for_domain(domain: str) -> list[str]:
+    domain_lower = domain.lower()
+    if "airline" in domain_lower:
+        return ["award_chart", "alliance_partners", "elite_status", "mileage_valuation"]
+    if "hotel" in domain_lower:
+        return ["tier_structure", "elite_nights", "redemption_value", "transfer_partners"]
+    if "bank" in domain_lower or "credit" in domain_lower:
+        return ["transfer_partners", "lounge_access", "reward_rate", "points_value"]
+    if "retail" in domain_lower or "commerce" in domain_lower:
+        return ["cashback_value", "partner_ecosystem", "earn_mechanics", "expiry_policy"]
+    return ["issuance_partners", "redemption_network", "partner_ecosystem", "earn_mechanics"]
+
+
+def _query_subject(program: str, brand: str) -> str:
+    program_words = program.split()
+    if len(program_words) <= 6:
+        return program
+    return brand or " ".join(program_words[:6])
+
+
+def _compact_query(query: str) -> str:
+    words = query.split()
+    return " ".join(words[:10])
+
+
+def _ordered_models(primary_model: str, fallback_models: str) -> list[str]:
+    models = [primary_model.strip()]
+    models.extend(model.strip() for model in fallback_models.split(",") if model.strip())
+    return list(dict.fromkeys(models))
+
+
+def _fallback_models_env(name: str, default: str) -> str:
+    if name in os.environ:
+        return os.environ[name]
+    return os.getenv("GEMINI_FALLBACK_MODELS") or default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _local_fallback_enabled() -> bool:
+    return os.getenv("QUERY_GENERATOR_LOCAL_FALLBACK", "1").strip().lower() not in {"0", "false", "no"}
 
 
 def infer_source_type(query: str) -> str:

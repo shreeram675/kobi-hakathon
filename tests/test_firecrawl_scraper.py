@@ -1,4 +1,6 @@
-from firecrawl_scraper import extract_content_blob, normalize_firecrawl_api_base, scrape_retrieved_urls
+import pytest
+
+from firecrawl_scraper import FirecrawlRestClient, extract_content_blob, normalize_firecrawl_api_base, scrape_retrieved_urls
 from schemas import RetrievedUrl
 
 
@@ -55,3 +57,22 @@ def test_normalize_firecrawl_api_base_upgrades_v1_scrape_endpoint():
         normalize_firecrawl_api_base("https://api.firecrawl.dev/v1/scrape")
         == "https://api.firecrawl.dev/v2/scrape"
     )
+
+
+def test_firecrawl_402_reports_insufficient_credits(monkeypatch):
+    class FakeProvider:
+        api_base = "https://api.firecrawl.dev/v2/scrape"
+        api_key = "fc-test"
+
+    class FakeResponse:
+        status_code = 402
+
+        def raise_for_status(self):
+            raise AssertionError("raise_for_status should not be reached for 402")
+
+    monkeypatch.setattr("firecrawl_scraper.provider_for_stage", lambda stage: FakeProvider())
+    monkeypatch.setattr("firecrawl_scraper.requests.post", lambda *args, **kwargs: FakeResponse())
+
+    client = FirecrawlRestClient()
+    with pytest.raises(RuntimeError, match="Insufficient Credits"):
+        client.scrape("https://example.com")

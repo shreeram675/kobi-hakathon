@@ -42,6 +42,11 @@ class FirecrawlRestClient:
             },
             timeout=90,
         )
+        if response.status_code == 402:
+            raise RuntimeError(
+                "Firecrawl returned 402 Insufficient Credits. The API key is valid, "
+                "but the Firecrawl account does not have enough credits for this scrape."
+            )
         if response.status_code == 403:
             raise RuntimeError(
                 f"Firecrawl returned 403 Forbidden for {self.api_base}. "

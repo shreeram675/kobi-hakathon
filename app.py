@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import streamlit as st
 
 from graph import run_validation_chat, run_validation_chat_traced
+from pipeline.schema_config import all_default_field_paths
 from validation import verifier_result_as_message
 
 
@@ -21,7 +22,22 @@ NODE_LABELS = {
     "query_generator": "Query Generator",
     "retrieval": "Tavily Retrieval",
     "firecrawl_scraper": "Firecrawl Scraper",
+    "raw_store": "Raw Store",
+    "chunker": "Semantic Chunker",
+    "gemini_extractor": "Gemini Extraction",
+    "normalizer": "Normalizer + Hashing",
 }
+
+INSPECTOR_NODES = (
+    "input_validator",
+    "query_generator",
+    "retrieval",
+    "firecrawl_scraper",
+    "raw_store",
+    "chunker",
+    "gemini_extractor",
+    "normalizer",
+)
 
 
 def result_to_assistant_text(result) -> str:
@@ -63,7 +79,9 @@ def run_workflow_with_live_status(messages: list[dict[str, str]]):
         status_box.write(f"{label}: {status} - {message}")
 
     state = run_validation_chat_traced(messages, on_event=on_event)
-    if state.get("firecrawl_result"):
+    if state.get("normalized_packets"):
+        status_box.update(label="Workflow complete", state="complete", expanded=False)
+    elif state.get("firecrawl_result"):
         status_box.update(label="Workflow complete", state="complete", expanded=False)
     elif state.get("validation_result") and state["validation_result"].status == "needs_clarification":
         status_box.update(label="Waiting for clarification", state="complete", expanded=False)
@@ -143,6 +161,7 @@ def render_flow_state(state) -> None:
         return
 
     render_pipeline_nodes(state)
+    render_stage_metrics(state)
 
     result = state.get("validation_result")
     if result is None:
@@ -167,14 +186,15 @@ def render_flow_state(state) -> None:
 def render_pipeline_nodes(state) -> None:
     st.subheader("Node Status")
     statuses = build_node_statuses(state)
-    cols = st.columns(4)
-    for column, node in zip(cols, ("input_validator", "query_generator", "retrieval", "firecrawl_scraper")):
-        status = statuses[node]
-        with column:
-            with st.container(border=True):
-                st.markdown(f"**{NODE_LABELS[node]}**")
-                st.markdown(f"Status: `{status['state']}`")
-                st.caption(status["message"])
+    for row_start in range(0, len(INSPECTOR_NODES), 4):
+        cols = st.columns(4)
+        for column, node in zip(cols, INSPECTOR_NODES[row_start : row_start + 4]):
+            status = statuses[node]
+            with column:
+                with st.container(border=True):
+                    st.markdown(f"{status_icon(status['state'])} **{NODE_LABELS[node]}**")
+                    st.markdown(f"Status: `{status['state']}`")
+                    st.caption(status["message"])
 
 
 def build_node_statuses(state) -> dict[str, dict[str, str]]:
@@ -186,6 +206,10 @@ def build_node_statuses(state) -> dict[str, dict[str, str]]:
         "query_generator": {"state": "Pending", "message": "Runs after validation resolves."},
         "retrieval": {"state": "Pending", "message": "Runs after query generation succeeds."},
         "firecrawl_scraper": {"state": "Pending", "message": "Runs after URL retrieval succeeds."},
+        "raw_store": {"state": "Pending", "message": "Runs after Firecrawl returns content."},
+        "chunker": {"state": "Pending", "message": "Runs after raw documents are stored."},
+        "gemini_extractor": {"state": "Pending", "message": "Runs after semantic chunks are ready."},
+        "normalizer": {"state": "Pending", "message": "Runs after extraction returns packets."},
     }
 
     if result:
@@ -227,7 +251,83 @@ def build_node_statuses(state) -> dict[str, dict[str, str]]:
     elif not state.get("retrieval_result"):
         statuses["firecrawl_scraper"] = {"state": "Locked", "message": "Tavily retrieval has not completed yet."}
 
+    if "ingest" in errors:
+        ingest_message = errors["ingest"]
+    else:
+        ingest_message = ""
+
+    raw_documents = state.get("raw_documents", [])
+    if raw_documents:
+        statuses["raw_store"] = {"state": "Complete", "message": f"Stored {len(raw_documents)} usable raw documents."}
+    elif state.get("firecrawl_result") and state["firecrawl_result"].successful_scrapes > 0:
+        statuses["raw_store"] = {"state": "Waiting", "message": ingest_message or "No page over 100 words was stored."}
+    elif not state.get("firecrawl_result"):
+        statuses["raw_store"] = {"state": "Locked", "message": "Firecrawl has not completed yet."}
+
+    chunks = state.get("semantic_chunks", [])
+    extraction_chunks = state.get("extraction_chunks", [])
+    skipped_chunks = state.get("skipped_chunks", [])
+    if chunks:
+        statuses["chunker"] = {
+            "state": "Complete",
+            "message": f"Created {len(chunks)} chunks; selected {len(extraction_chunks)} for extraction.",
+        }
+    elif raw_documents:
+        statuses["chunker"] = {"state": "Waiting", "message": "No chunk met the minimum section size."}
+    elif not raw_documents:
+        statuses["chunker"] = {"state": "Locked", "message": "Raw documents are not ready."}
+
+    extracted_packets = state.get("extracted_packets", [])
+    if extracted_packets:
+        statuses["gemini_extractor"] = {"state": "Complete", "message": f"Extracted {len(extracted_packets)} object packets."}
+    elif extraction_chunks:
+        statuses["gemini_extractor"] = {
+            "state": "Waiting",
+            "message": ingest_message or f"No packets from {len(extraction_chunks)} selected chunks.",
+        }
+    elif chunks:
+        statuses["gemini_extractor"] = {
+            "state": "Waiting",
+            "message": ingest_message or f"Skipped {len(skipped_chunks)} low-signal chunks before Gemini.",
+        }
+    elif not chunks:
+        statuses["gemini_extractor"] = {"state": "Locked", "message": "Semantic chunks are not ready."}
+
+    normalized_packets = state.get("normalized_packets", [])
+    if normalized_packets:
+        statuses["normalizer"] = {"state": "Complete", "message": f"Normalized {len(normalized_packets)} packets."}
+    elif extracted_packets:
+        statuses["normalizer"] = {"state": "Waiting", "message": "No normalized packets were produced."}
+    elif not extracted_packets:
+        statuses["normalizer"] = {"state": "Locked", "message": "Gemini extraction has not produced packets."}
+
     return statuses
+
+
+def status_icon(state: str) -> str:
+    return {
+        "Complete": "[OK]",
+        "Running": "[RUN]",
+        "Waiting": "[WAIT]",
+        "Pending": "[PENDING]",
+        "Locked": "[LOCKED]",
+        "Error": "[ERROR]",
+    }.get(state, "[PENDING]")
+
+
+def render_stage_metrics(state) -> None:
+    st.subheader("Stage Outputs")
+    metrics = (
+        ("Queries", len(state.get("search_queries", []))),
+        ("Unique URLs", len(state.get("retrieved_urls", []))),
+        ("Raw Docs", len(state.get("raw_documents", []))),
+        ("Chunks", len(state.get("semantic_chunks", []))),
+        ("Selected", len(state.get("extraction_chunks", []))),
+        ("Packets", len(state.get("normalized_packets", []))),
+    )
+    cols = st.columns(len(metrics))
+    for column, (label, value) in zip(cols, metrics):
+        column.metric(label, value)
 
 
 def render_node_results(state) -> None:
@@ -285,6 +385,76 @@ def render_node_results(state) -> None:
             )
         else:
             st.info("No Firecrawl scrape result yet.")
+
+    raw_documents = state.get("raw_documents", [])
+    with st.expander("Raw Document Store Result", expanded=bool(raw_documents)):
+        if raw_documents:
+            st.caption(f"{len(raw_documents)} raw documents persisted to SQLite")
+            st.json(
+                [
+                    {
+                        "url": document.url,
+                        "url_hash": document.url_hash,
+                        "word_count": document.word_count,
+                        "query_id": document.query_id,
+                        "entity_name": document.entity_name,
+                        "domain": document.domain,
+                        "retrieved_at": document.retrieved_at,
+                        "source_authority": document.source_authority,
+                        "metadata": document.metadata,
+                        "content_preview": preview_content(document.content),
+                    }
+                    for document in raw_documents
+                ]
+            )
+        else:
+            st.info("No raw documents stored yet. Pages under 100 words are skipped.")
+
+    semantic_chunks = state.get("semantic_chunks", [])
+    extraction_chunk_ids = {chunk.chunk_id for chunk in state.get("extraction_chunks", [])}
+    with st.expander("Semantic Chunker Result", expanded=bool(semantic_chunks)):
+        if semantic_chunks:
+            st.caption(
+                f"{len(semantic_chunks)} chunks created; "
+                f"{len(extraction_chunk_ids)} selected for Gemini extraction"
+            )
+            st.json(
+                [
+                    {
+                        "chunk_id": chunk.chunk_id,
+                        "selected_for_extraction": chunk.chunk_id in extraction_chunk_ids,
+                        "source_url": chunk.source_url,
+                        "target_field_count": len(chunk.target_fields),
+                        "target_fields_preview": chunk.target_fields[:20],
+                        "word_count": len(chunk.chunk_text.split()),
+                        "chunk_preview": preview_content(chunk.chunk_text),
+                    }
+                    for chunk in semantic_chunks
+                ]
+            )
+        else:
+            st.info("No semantic chunks yet.")
+
+    extracted_packets = state.get("extracted_packets", [])
+    with st.expander("Gemini Extraction Result", expanded=bool(extracted_packets)):
+        if extracted_packets:
+            st.caption(f"{len(extracted_packets)} raw extracted packets before normalization")
+            st.json([packet.model_dump() for packet in extracted_packets])
+        else:
+            st.info("No extracted packets yet. If chunks exist, Gemini found no explicit schema facts or extraction failed safely.")
+
+    normalized_packets = state.get("normalized_packets", [])
+    with st.expander("Normalized Packets Result", expanded=bool(normalized_packets)):
+        if normalized_packets:
+            st.caption(f"{len(normalized_packets)} normalized packets with identity hashes")
+            st.json([packet.model_dump() for packet in normalized_packets])
+        else:
+            st.info("No normalized packets yet.")
+
+    with st.expander("Focused Extraction Schema", expanded=False):
+        fields = all_default_field_paths()
+        st.caption(f"{len(fields)} required fields from the selected report schema")
+        st.json(fields)
 
 
 def preview_content(content: str | None, limit: int = 900) -> str | None:

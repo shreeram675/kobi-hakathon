@@ -67,7 +67,12 @@ STAGE_PROVIDERS: dict[str, ProviderConfig] = {
         api_key_env="FIRECRAWL_API_KEY",
         api_base_env="FIRECRAWL_API_BASE",
     ),
-    "extraction": ProviderConfig("gemini", model="gemini-2.5-flash", api_key_env="GEMINI_API_KEY"),
+    "extraction": ProviderConfig(
+        "gemini",
+        model="gemini-2.5-flash",
+        api_key_env="GEMINI_API_KEY",
+        api_base_env="GEMINI_API_BASE",
+    ),
     "verification": ProviderConfig("gemini", model="gemini-2.5-flash", api_key_env="GEMINI_API_KEY"),
     "narration": ProviderConfig("gemini", model="gemini-2.5-flash", api_key_env="GEMINI_API_KEY"),
     "converse": ProviderConfig("groq", model="llama-3.1-70b-versatile", api_key_env="GROQ_API_KEY"),

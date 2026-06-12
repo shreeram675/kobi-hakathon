@@ -71,7 +71,7 @@ def fake_firecrawl_output(urls):
             ScrapedUrlBlock(
                 url=urls[0].url,
                 canonical_url=urls[0].canonical_url,
-                content={"program_basics.program_name": "Air India Maharaja Club"},
+                content="# Air India Maharaja Club\n\nProgram terms and benefits.",
             )
         ],
     )
@@ -106,6 +106,19 @@ def test_query_generator_can_run_explicitly(monkeypatch):
     state = graph.run_query_generation(state)
 
     assert state["search_queries"]
+
+
+def test_firecrawl_url_selection_prioritizes_high_value_sources(monkeypatch):
+    monkeypatch.setenv("MAX_FIRECRAWL_URLS", "2")
+    urls = [
+        RetrievedUrl(url="https://forum.example", canonical_url="https://forum.example", score=1.0, query="q", source_type="forums"),
+        RetrievedUrl(url="https://official.example", canonical_url="https://official.example", score=0.4, query="q", source_type="official"),
+        RetrievedUrl(url="https://terms.example", canonical_url="https://terms.example", score=0.8, query="q", source_type="terms"),
+    ]
+
+    selected = graph.select_urls_for_firecrawl(urls)
+
+    assert [item.url for item in selected] == ["https://official.example", "https://terms.example"]
 
 
 def test_graph_stops_after_input_validator_when_clarification_needed(monkeypatch):

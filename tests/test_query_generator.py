@@ -6,6 +6,7 @@ import requests
 from query_generator import (
     GeminiQueryGeneratorClient,
     QUERY_GENERATOR_SYSTEM_PROMPT,
+    build_local_query_generation_output,
     generate_queries,
     parse_query_generation_output,
 )
@@ -36,6 +37,16 @@ class FakeQueryClient:
         }
 
 
+class RateLimitedQueryClient:
+    def complete_json(self, prompt):
+        response = requests.Response()
+        response.status_code = 429
+        raise requests.HTTPError(
+            "Gemini query generator is temporarily unavailable (429) for model gemini-2.5-flash.",
+            response=response,
+        )
+
+
 def test_generate_queries_uses_validated_identity():
     identity = ProgramIdentity(
         raw_input="american express",
@@ -59,6 +70,44 @@ def test_generate_queries_uses_validated_identity():
     assert result.queries[0].external_query_id == "Q01"
     assert result.queries[0].target_fields == ["point_value", "partnerships"]
     assert result.queries[1].source_type == "app_reviews"
+
+
+def test_generate_queries_uses_local_fallback_for_gemini_429(monkeypatch):
+    monkeypatch.delenv("QUERY_GENERATOR_LOCAL_FALLBACK", raising=False)
+    identity = ProgramIdentity(
+        raw_input="Air India",
+        program_name="Air India Maharaja Club",
+        brand="Air India",
+        domain="Airline",
+        country_or_region="India",
+        confidence=0.95,
+    )
+
+    result = generate_queries(identity, client=RateLimitedQueryClient())
+
+    assert result.detected_category == "Airline"
+    assert "Gemini returned 429" in result.query_strategy_summary
+    assert len(result.queries) >= 9
+    assert result.field_query_map
+    assert any(query.source_type == "forums" for query in result.queries)
+    assert any("competitive_position" in query.target_fields for query in result.queries)
+
+
+def test_local_query_fallback_keeps_queries_concise():
+    identity = ProgramIdentity(
+        raw_input="Amex",
+        program_name="American Express Membership Rewards",
+        brand="American Express",
+        domain="Banking/Credit Card",
+        country_or_region="United States",
+        confidence=0.95,
+    )
+
+    result = build_local_query_generation_output(identity, reason="Gemini returned 429")
+
+    assert len(result.queries) == 10
+    assert all(len(query.query.split()) <= 10 for query in result.queries)
+    assert any("lounge_access" in query.target_fields for query in result.queries)
 
 
 def test_query_generator_prompt_contains_strict_query_laws():
@@ -136,8 +185,43 @@ def test_gemini_client_retries_transient_503(monkeypatch):
     assert result["detected_category"] == "Airline"
 
 
+def test_gemini_client_falls_back_to_lite_model_after_503(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("GEMINI_API_BASE", "https://example.test/v1beta")
+    monkeypatch.setenv("QUERY_GENERATOR_MODEL", "gemini-2.5-flash")
+    monkeypatch.setenv("QUERY_GENERATOR_FALLBACK_MODELS", "gemini-2.5-flash-lite")
+
+    unavailable = Mock(status_code=503)
+    ok = Mock(status_code=200)
+    ok.json.return_value = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": '{"detected_category":"Hotel","query_strategy_summary":"ok","priority_fields":[],"queries":[]}'
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    with patch("query_generator.requests.post", side_effect=[unavailable, ok]) as post:
+        with patch("query_generator.time.sleep"):
+            client = GeminiQueryGeneratorClient(max_retries=0, retry_sleep_seconds=0)
+            result = client.complete_json("prompt")
+
+    assert post.call_count == 2
+    assert "/models/gemini-2.5-flash:generateContent" in post.call_args_list[0].args[0]
+    assert "/models/gemini-2.5-flash-lite:generateContent" in post.call_args_list[1].args[0]
+    assert result["detected_category"] == "Hotel"
+
+
 def test_gemini_client_reports_transient_failure_after_retries(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("QUERY_GENERATOR_MODEL", "gemini-2.5-flash")
+    monkeypatch.setenv("QUERY_GENERATOR_FALLBACK_MODELS", "")
     unavailable = Mock(status_code=503)
 
     with patch("query_generator.requests.post", return_value=unavailable):

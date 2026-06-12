@@ -155,6 +155,7 @@ AG-6 AGENTSTATE_REQUIRED_KEYS
 run_id, mode, user_input, validation_result, program_identity, program_name,
 brand, domain, country_or_region, query_generation_result, search_queries,
 retrieval_result, retrieved_urls, firecrawl_result, scraped_blocks,
+raw_documents, semantic_chunks, schema_config, normalized_packets,
 retrieved_pages, sanitized_chunks, extracted_claims, conflicts,
 adjudicated_claims, schema_coverage, data_quality, final_brief,
 comparison_output, conversation_answer, errors, created_at, updated_at
@@ -202,6 +203,49 @@ is the raw scraped markdown/text blob. Do not force schema extraction inside
 Firecrawl; schema mapping belongs to the later chunking/extraction node. Failed
 URLs should still produce a block with content null and an error for
 auditability.
+
+Post-Firecrawl ingestion node:
+Immediately after Firecrawl, run a domain-agnostic ingestion pipeline:
+Raw Document Store -> Semantic Chunking -> Gemini Structured Extraction ->
+Packet Normalization -> Identity Hashing. This stage outputs
+state["normalized_packets"]. It must not perform conflict detection,
+adjudication, debate, reconciliation, canonicalization, brief generation, or
+report generation.
+
+Raw Document Store:
+Persist Firecrawl markdown/text blobs in SQLite as RawDocument records. Skip
+pages under 100 words. Generate url_hash as sha256(url)[:16]. Store url,
+url_hash, content, word_count, query_id, entity_name, domain, retrieved_at,
+source_authority, and source metadata. Writes must be idempotent.
+
+Semantic Chunking:
+Split markdown on headings, ignore sections under 30 words, and split sections
+over about 1500 words at paragraph boundaries. Return chunk_id, chunk_text,
+source_url, and target_fields. The chunker must contain no loyalty-specific
+logic, aliases, or hardcoded brands.
+
+Gemini Structured Extraction:
+Extraction is runtime-schema driven via FieldDef, ObjectTypeDef, and
+SchemaConfig. The extractor itself must know nothing about loyalty programs or
+any future domain. Gemini must extract only explicitly stated facts from the
+chunk text, never infer, never fill gaps, and never use training knowledge.
+When no caller-supplied SchemaConfig exists, Kobie should provide its
+project-level default runtime schema containing every AG-4 field path. This is
+configuration, not extractor logic; the extractor must still enforce whatever
+runtime schema it receives.
+Each field must be one of EXTRACTED, NOT_FOUND, or AMBIGUOUS. EXTRACTED values
+must include a source_snippet. Missing evidence remains value null with status
+NOT_FOUND. Unclear evidence remains value null with status AMBIGUOUS. On JSON
+parse failure retry once, then return an empty list without crashing.
+
+Normalization and identity hashing:
+Normalize extracted values by lowercasing strings, stripping whitespace,
+deduplicating and sorting arrays, and converting numeric strings to numeric
+types. Preserve source_snippet unchanged. Never alter NOT_FOUND or AMBIGUOUS
+values. Add normalized_at. Generate identity_hash from object_type, extracted
+identity fields, and scope.geography using sha256(... )[:24]. Only fields with
+status EXTRACTED participate. If no identity fields are extracted, generate a
+UUID hash and log a warning. Persist normalized packets to SQLite.
 
 Zero-result gate:
 If fewer than 2 usable pages have more than 150 tokens, stop before extraction.

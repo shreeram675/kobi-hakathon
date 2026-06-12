@@ -73,12 +73,14 @@ SCHEMA_FIELD_PATHS: tuple[str, ...] = (
     "tier_system.elite_bonus",
     "partnerships.partner_names",
     "partnerships.partnership_type",
+    "partnerships.details",
     "partnerships.partner_category",
     "partnerships.earn_details",
     "partnerships.burn_details",
     "partnerships.transfer_ratios",
     "partnerships.discontinued_partners",
     "digital_experience.mobile_app_available",
+    "digital_experience.app_ratings",
     "digital_experience.app_store_rating",
     "digital_experience.play_store_rating",
     "digital_experience.personalization_features",
@@ -89,6 +91,7 @@ SCHEMA_FIELD_PATHS: tuple[str, ...] = (
     "member_sentiment.common_praise",
     "member_sentiment.common_complaints",
     "member_sentiment.complaint_frequency",
+    "member_sentiment.sources_checked",
     "member_sentiment.review_sources_checked",
     "member_sentiment.forum_sources_checked",
     "member_sentiment.sentiment_summary",
@@ -108,6 +111,7 @@ HIGH_VOLATILITY_FIELDS = frozenset(
         "tier_system.tier_thresholds",
         "burn_mechanics.point_value_cpp",
         "partnerships.partner_names",
+        "digital_experience.app_ratings",
         "digital_experience.app_store_rating",
         "digital_experience.play_store_rating",
         "competitive_position.recent_changes_last_6_months",
@@ -206,6 +210,57 @@ class FirecrawlScrapeOutput(KobieModel):
     successful_scrapes: int
     failed_scrapes: int
     blocks: list[ScrapedUrlBlock] = Field(default_factory=list)
+
+
+class RawDocument(KobieModel):
+    """Raw post-Firecrawl document persisted before chunking."""
+
+    url: str
+    url_hash: str
+    content: str
+    word_count: int = Field(ge=0)
+    query_id: str | None = None
+    entity_name: str | None = None
+    domain: str | None = None
+    retrieved_at: str = Field(default_factory=now_iso)
+    source_authority: float | None = Field(default=None, ge=0, le=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SemanticChunk(KobieModel):
+    """Domain-agnostic chunk prepared for structured extraction."""
+
+    chunk_id: str
+    chunk_text: str
+    source_url: str
+    target_fields: list[str] = Field(default_factory=list)
+
+
+class ExtractedField(KobieModel):
+    """Single schema field extracted from explicit source evidence."""
+
+    value: Any | None = None
+    status: Literal["EXTRACTED", "NOT_FOUND", "AMBIGUOUS"]
+    source_url: str | None = None
+    source_snippet: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class ExtractedObjectPacket(KobieModel):
+    """Runtime-schema object produced by the Gemini extraction stage."""
+
+    object_type: str
+    fields: dict[str, ExtractedField] = Field(default_factory=dict)
+    source_url: str
+    chunk_id: str
+    scope: dict[str, Any] = Field(default_factory=dict)
+
+
+class NormalizedObjectPacket(ExtractedObjectPacket):
+    """Normalized object packet with deterministic or fallback identity hash."""
+
+    identity_hash: str
+    normalized_at: str = Field(default_factory=now_iso)
 
 
 class PageRef(KobieModel):
@@ -330,6 +385,13 @@ class AgentState(TypedDict):
     retrieved_urls: list[RetrievedUrl]
     firecrawl_result: FirecrawlScrapeOutput | None
     scraped_blocks: list[ScrapedUrlBlock]
+    raw_documents: NotRequired[list[RawDocument]]
+    semantic_chunks: NotRequired[list[SemanticChunk]]
+    extraction_chunks: NotRequired[list[SemanticChunk]]
+    skipped_chunks: NotRequired[list[SemanticChunk]]
+    schema_config: NotRequired[dict[str, Any] | None]
+    extracted_packets: NotRequired[list[ExtractedObjectPacket]]
+    normalized_packets: NotRequired[list[NormalizedObjectPacket]]
     retrieved_pages: list[PageRef]
     sanitized_chunks: list[ChunkRef]
     extracted_claims: list[Claim]
@@ -364,6 +426,13 @@ def build_initial_state(user_input: str, mode: RunMode = RunMode.SINGLE) -> Agen
         "retrieved_urls": [],
         "firecrawl_result": None,
         "scraped_blocks": [],
+        "raw_documents": [],
+        "semantic_chunks": [],
+        "extraction_chunks": [],
+        "skipped_chunks": [],
+        "schema_config": None,
+        "extracted_packets": [],
+        "normalized_packets": [],
         "retrieved_pages": [],
         "sanitized_chunks": [],
         "extracted_claims": [],

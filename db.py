@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from schemas import Claim, ProgramIdentity, now_iso
+from schemas import Claim, NormalizedObjectPacket, ProgramIdentity, RawDocument, now_iso
 
 
 DEFAULT_DB_PATH = Path("kobie.sqlite3")
@@ -128,6 +128,31 @@ DDL = (
         FOREIGN KEY(run_id) REFERENCES runs(run_id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS raw_documents (
+        url_hash TEXT PRIMARY KEY,
+        url TEXT NOT NULL,
+        content TEXT NOT NULL,
+        word_count INTEGER NOT NULL,
+        query_id TEXT,
+        entity_name TEXT,
+        domain TEXT,
+        retrieved_at TEXT NOT NULL,
+        source_authority REAL,
+        metadata_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS normalized_packets (
+        identity_hash TEXT NOT NULL,
+        object_type TEXT NOT NULL,
+        source_url TEXT NOT NULL,
+        chunk_id TEXT NOT NULL,
+        packet_json TEXT NOT NULL,
+        normalized_at TEXT NOT NULL,
+        PRIMARY KEY(identity_hash, source_url, chunk_id)
+    )
+    """,
 )
 
 
@@ -213,6 +238,70 @@ def insert_claims(conn: sqlite3.Connection, claims: list[Claim]) -> None:
             VALUES
                 (:claim_id, :run_id, :field_path, :value_json, :status, :source_url, :access_date, :quote, :confidence, :volatility)
             ON CONFLICT(claim_id) DO NOTHING
+            """,
+            rows,
+        )
+        conn.commit()
+
+
+def upsert_raw_documents(conn: sqlite3.Connection, documents: list[RawDocument]) -> None:
+    """Persist raw Firecrawl documents idempotently by URL hash."""
+
+    rows = [
+        {
+            **document.model_dump(),
+            "metadata_json": json.dumps(document.metadata, ensure_ascii=True),
+        }
+        for document in documents
+    ]
+    with _WRITE_LOCK:
+        conn.executemany(
+            """
+            INSERT INTO raw_documents
+                (url_hash, url, content, word_count, query_id, entity_name, domain, retrieved_at, source_authority, metadata_json)
+            VALUES
+                (:url_hash, :url, :content, :word_count, :query_id, :entity_name, :domain, :retrieved_at, :source_authority, :metadata_json)
+            ON CONFLICT(url_hash) DO UPDATE SET
+                url=excluded.url,
+                content=excluded.content,
+                word_count=excluded.word_count,
+                query_id=excluded.query_id,
+                entity_name=excluded.entity_name,
+                domain=excluded.domain,
+                retrieved_at=excluded.retrieved_at,
+                source_authority=excluded.source_authority,
+                metadata_json=excluded.metadata_json
+            """,
+            rows,
+        )
+        conn.commit()
+
+
+def upsert_normalized_packets(conn: sqlite3.Connection, packets: list[NormalizedObjectPacket]) -> None:
+    """Persist normalized extraction packets idempotently."""
+
+    rows = [
+        {
+            "identity_hash": packet.identity_hash,
+            "object_type": packet.object_type,
+            "source_url": packet.source_url,
+            "chunk_id": packet.chunk_id,
+            "packet_json": packet.model_dump_json(),
+            "normalized_at": packet.normalized_at,
+        }
+        for packet in packets
+    ]
+    with _WRITE_LOCK:
+        conn.executemany(
+            """
+            INSERT INTO normalized_packets
+                (identity_hash, object_type, source_url, chunk_id, packet_json, normalized_at)
+            VALUES
+                (:identity_hash, :object_type, :source_url, :chunk_id, :packet_json, :normalized_at)
+            ON CONFLICT(identity_hash, source_url, chunk_id) DO UPDATE SET
+                object_type=excluded.object_type,
+                packet_json=excluded.packet_json,
+                normalized_at=excluded.normalized_at
             """,
             rows,
         )
