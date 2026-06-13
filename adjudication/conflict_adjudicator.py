@@ -14,7 +14,7 @@ from datetime import date, datetime
 import json
 from typing import Any
 
-from schemas import AgentState, FieldReport, NormalizedObjectPacket, RawDocument, now_iso
+from schemas import AgentState, FieldReport, NormalizedObjectPacket, RawDocument, new_id, now_iso
 from adjudication.debate_engine import run_debate
 
 
@@ -75,6 +75,7 @@ DEFAULT_AUTHORITY = "aggregator"
 def adjudicator_node(state: AgentState) -> AgentState:
     """Resolve every conflict in state into state["adjudicated"]."""
 
+    run_id = state.get("run_id") or ""
     conflicts = [item for item in state.get("conflicts") or [] if isinstance(item, dict) and "claim_a" in item]
     if not conflicts:
         conflicts = detect_conflicts_from_packets(
@@ -83,6 +84,7 @@ def adjudicator_node(state: AgentState) -> AgentState:
         )
 
     adjudicated: list[dict[str, Any]] = []
+    human_review_items: list[dict[str, Any]] = list(state.get("human_review_queue") or [])
     debated: list[dict[str, Any]] = []
     for conflict in conflicts:
         confidence_a = float(conflict["claim_a"].get("confidence") or 0.0)
@@ -109,18 +111,50 @@ def adjudicator_node(state: AgentState) -> AgentState:
     if debated:
         results = asyncio.run(_run_debates(debated))
         for conflict, result in zip(debated, results):
-            adjudicated.extend(_entries_from_debate(conflict, result))
+            entries = _entries_from_debate(conflict, result)
+            adjudicated.extend(entries)
+            if result.get("winner") == "FLAG":
+                human_review_items.append(_build_human_review_item(conflict, result, run_id))
 
     updated: AgentState = {
         **state,
         "conflicts": conflicts,
         "adjudicated": adjudicated,
+        "human_review_queue": human_review_items,
         "updated_at": now_iso(),
     }
     field_report = state.get("field_report")
     if field_report is not None and adjudicated:
         updated["field_report"] = apply_adjudication_to_field_report(field_report, adjudicated)
     return updated
+
+
+def _build_human_review_item(
+    conflict: dict[str, Any], debate_result: dict[str, Any], run_id: str
+) -> dict[str, Any]:
+    """Build a structured human-review queue entry when the judge returns FLAG."""
+    return {
+        "review_id": new_id("review"),
+        "run_id": run_id,
+        "field_name": str(conflict["field_name"]),
+        "claim_a": conflict["claim_a"],
+        "claim_b": conflict["claim_b"],
+        "volatility": conflict.get("volatility"),
+        "debate_transcript": {
+            "argument_a": debate_result.get("argument_a", ""),
+            "argument_b": debate_result.get("argument_b", ""),
+            "rebuttal_a": debate_result.get("rebuttal_a", ""),
+            "rebuttal_b": debate_result.get("rebuttal_b", ""),
+        },
+        "judge_verdict": {
+            "deciding_factor": debate_result.get("deciding_factor"),
+            "reasoning": debate_result.get("reasoning"),
+            "rebuttal_assessment": debate_result.get("rebuttal_assessment"),
+            "hallucination_detected": debate_result.get("hallucination_detected"),
+        },
+        "final_confidence": debate_result.get("final_confidence"),
+        "flagged_at": now_iso(),
+    }
 
 
 async def _run_debates(conflicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -130,13 +164,16 @@ async def _run_debates(conflicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _entries_from_debate(conflict: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
     if result["winner"] == "FLAG":
+        # Use the debate's final_confidence (judge may have adjusted it) rather than
+        # the hard-coded constant, falling back to FLAG_CONFIDENCE if absent.
+        flag_confidence = float(result.get("final_confidence") or FLAG_CONFIDENCE)
         return [
             {
                 "field_name": conflict["field_name"],
                 "winner": "FLAG",
                 "value": str(claim["value"]),
                 "source_url": claim.get("source_url"),
-                "confidence": FLAG_CONFIDENCE,
+                "confidence": flag_confidence,
                 "resolution": "flag",
                 "deciding_factor": result.get("deciding_factor", "unresolvable"),
                 "reasoning": result.get("reasoning", ""),
@@ -178,7 +215,15 @@ def detect_conflicts_from_packets(
 
     for packet in packets:
         for field_name, field in packet.fields.items():
-            if field.status != "EXTRACTED" or field.value is None or not field.source_url:
+            # Include EXTRACTED fields and AMBIGUOUS fields that still carry a value.
+            # AMBIGUOUS-with-value arises when the normalizer validation flags a suspicious
+            # extraction (e.g. a room count in membership_count). Including it here lets the
+            # auto-resolve path pick the correct EXTRACTED value from another source
+            # (confidence gap > 0.20 is guaranteed when one side is 0.0).
+            # AMBIGUOUS fields with value=None carry no evidence and are always skipped.
+            if field.value is None or not field.source_url:
+                continue
+            if field.status not in ("EXTRACTED", "AMBIGUOUS"):
                 continue
             value_key = json.dumps(field.value, sort_keys=True, ensure_ascii=True, default=str)
             group = groups[field_name].setdefault(
@@ -186,7 +231,9 @@ def detect_conflicts_from_packets(
                 {"value": field.value, "source_urls": set(), "confidence": 0.0},
             )
             group["source_urls"].add(field.source_url)
-            group["confidence"] = max(group["confidence"], field.confidence or 0.0)
+            # AMBIGUOUS confidence is kept at 0.0 so EXTRACTED values always win auto-resolve.
+            if field.status == "EXTRACTED":
+                group["confidence"] = max(group["confidence"], field.confidence or 0.0)
 
     conflicts: list[dict[str, Any]] = []
     for field_name, value_groups in groups.items():
@@ -240,13 +287,16 @@ def apply_adjudication_to_field_report(
             continue
         if any(resolution["resolution"] == "flag" for resolution in resolutions):
             entries.append(
-                entry.model_copy(update={"status": "ambiguous", "confidence": FLAG_CONFIDENCE})
+                entry.model_copy(update={"status": "flagged", "confidence": FLAG_CONFIDENCE})
             )
             continue
         resolution = resolutions[0]
+        # Promote status to "extracted" — debate produced a clear winner, regardless of
+        # what the entry's pre-adjudication status was (extracted or ambiguous).
         entries.append(
             entry.model_copy(
                 update={
+                    "status": "extracted",
                     "value": resolution["value"],
                     "source_urls": [resolution["source_url"]] if resolution.get("source_url") else entry.source_urls,
                     "confidence": resolution["confidence"],
@@ -260,6 +310,7 @@ def apply_adjudication_to_field_report(
             "extracted_count": sum(1 for item in entries if item.status == "extracted"),
             "ambiguous_count": sum(1 for item in entries if item.status == "ambiguous"),
             "not_found_count": sum(1 for item in entries if item.status == "not_found"),
+            "flagged_count": sum(1 for item in entries if item.status == "flagged"),
         }
     )
 

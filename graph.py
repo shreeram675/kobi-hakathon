@@ -167,6 +167,21 @@ def ingest_node(state: AgentState) -> dict:
         }
 
 
+def narrator_node(state: AgentState) -> dict:
+    """Generate a 600-900 word program brief from the adjudicated field report."""
+    try:
+        from narration import narrator_node as _narrator
+        return _narrator(state)
+    except Exception as exc:
+        return {
+            "errors": [
+                *state.get("errors", []),
+                PipelineError(stage="narration", message=str(exc)),
+            ],
+            "updated_at": now_iso(),
+        }
+
+
 def adjudication_node(state: AgentState) -> dict:
     """Detect conflicting extracted claims and resolve them via debate."""
 
@@ -178,6 +193,7 @@ def adjudication_node(state: AgentState) -> dict:
             "conflicts": updated.get("conflicts", []),
             "adjudicated": updated.get("adjudicated", []),
             "field_report": updated.get("field_report"),
+            "human_review_queue": updated.get("human_review_queue", []),
             "updated_at": now_iso(),
         }
     except Exception as exc:
@@ -198,6 +214,7 @@ def build_kobie_graph():
     graph.add_node("firecrawl_scraper", firecrawl_node)
     graph.add_node("ingest", ingest_node)
     graph.add_node("adjudication", adjudication_node)
+    graph.add_node("narration", narrator_node)
     graph.add_edge(START, "input_validator")
     graph.add_conditional_edges(
         "input_validator",
@@ -208,7 +225,8 @@ def build_kobie_graph():
     graph.add_edge("retrieval", "firecrawl_scraper")
     graph.add_edge("firecrawl_scraper", "ingest")
     graph.add_edge("ingest", "adjudication")
-    graph.add_edge("adjudication", END)
+    graph.add_edge("adjudication", "narration")
+    graph.add_edge("narration", END)
     return graph.compile()
 
 
@@ -301,6 +319,13 @@ def run_validation_chat_traced(
         emit("adjudication", "complete", f"Adjudicated {len(conflicts)} conflicting fields.")
     else:
         emit("adjudication", "complete", "No conflicting claims between sources.")
+
+    emit("narration", "running", "Synthesizing the program brief from adjudicated claims.")
+    state = {**state, **narrator_node(state)}
+    if state.get("final_brief"):
+        emit("narration", "complete", f"Brief generated ({state['final_brief'].word_count} words).")
+    else:
+        emit("narration", "error", _latest_error_message(state, "Narration failed."))
     return state
 
 

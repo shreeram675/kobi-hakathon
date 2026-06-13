@@ -269,7 +269,7 @@ class FieldReportEntry(KobieModel):
 
     field_path: str
     category: str
-    status: Literal["extracted", "ambiguous", "not_found"]
+    status: Literal["extracted", "ambiguous", "not_found", "flagged"]
     value: Any | None = None
     source_urls: list[str] = Field(default_factory=list)
     source_snippet: str | None = None
@@ -286,6 +286,7 @@ class FieldReport(KobieModel):
     extracted_count: int = Field(default=0, ge=0)
     ambiguous_count: int = Field(default=0, ge=0)
     not_found_count: int = Field(default=0, ge=0)
+    flagged_count: int = Field(default=0, ge=0)
 
 
 class PageRef(KobieModel):
@@ -423,6 +424,7 @@ class AgentState(TypedDict):
     extracted_claims: list[Claim]
     conflicts: list[ConflictRecord | dict[str, Any]]
     adjudicated: NotRequired[list[dict[str, Any]]]
+    human_review_queue: NotRequired[list[dict[str, Any]]]
     adjudicated_claims: list[Claim]
     schema_coverage: SchemaCoverage
     data_quality: float
@@ -466,6 +468,7 @@ def build_initial_state(user_input: str, mode: RunMode = RunMode.SINGLE) -> Agen
         "extracted_claims": [],
         "conflicts": [],
         "adjudicated": [],
+        "human_review_queue": [],
         "adjudicated_claims": [],
         "schema_coverage": SchemaCoverage(),
         "data_quality": 0.0,

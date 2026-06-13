@@ -23,16 +23,16 @@ from providers import provider_for_stage
 DEFAULT_DEBATE_MODEL = "llama3-70b-8192"
 SIMILARITY_THRESHOLD = 0.80
 
-# Advocate temperature 0.3: enough variation to surface different argument
-# angles between advocates, but not creative enough to drift from metadata.
-ADVOCATE_TEMPERATURE = 0.3
+# Advocate temperature 0.0: must stay strictly grounded in provided metadata.
+# Any non-zero temperature risks inventing facts not present in claim metadata.
+ADVOCATE_TEMPERATURE = 0.0
 ADVOCATE_MAX_TOKENS = 200
 REBUTTAL_MAX_TOKENS = 150
 
 # Judge temperature 0.1: the verdict must be deterministic and reproducible;
 # the judge weighs evidence, it does not generate ideas.
 JUDGE_TEMPERATURE = 0.1
-JUDGE_MAX_TOKENS = 250
+JUDGE_MAX_TOKENS = 350
 
 # Groq free-tier rate limits crash on bursts; cap in-flight calls at 3 so
 # concurrent debates across multiple conflicts queue instead of failing.
@@ -63,14 +63,19 @@ VOLATILITY: {volatility}
 CONFIDENCE WEIGHTS for {volatility} volatility: recency {recency_weight} | authority {authority_weight} | corroboration {corroboration_weight}
 AUTHORITY TIERS (strongest first): {authority_ranking}
 
-CLAIM A: {claim_a}
-CLAIM B: {claim_b}
+AVAILABLE METADATA — argue ONLY from these facts:
+  CLAIM A: {claim_a}
+  CLAIM B: {claim_b}
+
+HALLUCINATION FENCE — STRICTLY ENFORCED:
+- Use ONLY the metadata values listed in AVAILABLE METADATA above.
+- Do NOT invent, infer, or speculate about any fact not explicitly present in the metadata.
+- If a metadata field is absent or says "None", state "not provided" — never guess.
+- Do NOT claim the opposing source is copied, derivative, or related to yours.
+- Any statement that cannot be traced to AVAILABLE METADATA is a hallucination and will be discarded by the judge.
 
 RULES:
 - Argue using ONLY recency, authority, corroboration, and the volatility context above.
-- Do NOT invent facts about either source.
-- Do NOT claim the opposing sources are related, copies, or derivative.
-- Do NOT reference any knowledge beyond the metadata above.
 - Be specific: cite the metadata numbers and the volatility weights. Vague appeals like "official sources are always better" are weak.
 
 Write the argument for CLAIM {advocate} in at most 120 words."""
@@ -85,18 +90,24 @@ VOLATILITY: {volatility}
 CONFIDENCE WEIGHTS for {volatility} volatility: recency {recency_weight} | authority {authority_weight} | corroboration {corroboration_weight}
 AUTHORITY TIERS (strongest first): {authority_ranking}
 
-CLAIM A: {claim_a}
-CLAIM B: {claim_b}
+AVAILABLE METADATA — rebut ONLY from these facts:
+  CLAIM A: {claim_a}
+  CLAIM B: {claim_b}
 
 TASK: Identify the SINGLE weakest point in the opposing argument and challenge it using only the metadata dimensions above.
 
 Permitted rebuttal angles:
 {permitted_angles}
 
+HALLUCINATION FENCE — STRICTLY ENFORCED:
+- Your rebuttal must cite ONLY facts present in AVAILABLE METADATA.
+- Do NOT introduce any fact that is not in the metadata above.
+- Do NOT claim the opposing sources are copies, shared, or derivative — you were not given that information.
+- Any fact you add beyond AVAILABLE METADATA is a hallucination; the judge will mark your rebuttal "hallucinated" and discard it entirely.
+
 RULES:
 - Challenge exactly one weak point; do not list several.
 - Do NOT simply repeat your original argument.
-- Do NOT introduce any fact that is not in the metadata above (for example, never claim the opposing sources copied each other — you were not given that information).
 
 Write the rebuttal in at most 90 words."""
 
@@ -110,15 +121,16 @@ REBUTTAL_ANGLES_B = """- The opponent overweights authority for a HIGH volatilit
 - The opponent's official authority does not compensate for the recency gap.
 - The volatility weights do not support the opponent's authority-first conclusion."""
 
-JUDGE_PROMPT_TEMPLATE = """You are the Judge in an adversarial debate about a disputed loyalty program field. Decide which claim is correct using only the metadata and the debate transcript below.
+JUDGE_PROMPT_TEMPLATE = """You are the Judge in an adversarial debate about a disputed loyalty program field. Decide which claim is correct using ONLY the metadata and debate transcript below. Never use external knowledge.
 
 FIELD: {field_name}
 VOLATILITY: {volatility}
 CONFIDENCE WEIGHTS for {volatility} volatility: recency {recency_weight} | authority {authority_weight} | corroboration {corroboration_weight}
 AUTHORITY TIERS (strongest first): {authority_ranking}
 
-CLAIM A: {claim_a}
-CLAIM B: {claim_b}
+AVAILABLE METADATA:
+  CLAIM A: {claim_a}
+  CLAIM B: {claim_b}
 
 ARGUMENT A:
 {argument_a}
@@ -133,11 +145,12 @@ REBUTTAL B:
 {rebuttal_b}
 
 Evaluate in this exact order:
-1. Apply the volatility weights — which signal dominates for this field?
-2. Evaluate the original arguments — which made the stronger evidence case?
-3. Evaluate the rebuttals — specific and grounded beats vague and repetitive. A rebuttal that introduces facts not present in the claim metadata is hallucinated and must be ignored. A rebuttal that precisely targets the opposing metadata weakness is strong and carries high weight.
-4. Combine all signals into a verdict.
-5. If genuinely unresolvable after all steps, return FLAG.
+1. HALLUCINATION SCAN — compare every statement in each argument and rebuttal against AVAILABLE METADATA. Any fact not traceable to AVAILABLE METADATA is a hallucination. Mark hallucinated arguments/rebuttals in hallucination_detected and treat them as if they were never said.
+2. Apply the volatility weights — which metadata signal dominates for this field?
+3. Evaluate the original arguments using only non-hallucinated statements — which made the stronger grounded evidence case?
+4. Evaluate the rebuttals — specific and grounded beats vague. Any rebuttal flagged in Step 1 must be scored "hallucinated" in rebuttal_assessment and fully discarded from Step 3-4 reasoning.
+5. Combine all surviving signals into a verdict.
+6. Return FLAG ONLY when the metadata itself is genuinely insufficient to distinguish the claims after all steps above — NOT simply because arguments were weak or unconvincing.
 
 Output ONLY valid JSON, no preamble, no markdown fences:
 {{
@@ -148,6 +161,12 @@ Output ONLY valid JSON, no preamble, no markdown fences:
     "rebuttal_assessment": {{
         "A_rebuttal": "strong" or "weak" or "hallucinated",
         "B_rebuttal": "strong" or "weak" or "hallucinated"
+    }},
+    "hallucination_detected": {{
+        "argument_a": false,
+        "argument_b": false,
+        "rebuttal_a": false,
+        "rebuttal_b": false
     }},
     "confidence_adjustment": <float between -0.10 and +0.10>
 }}"""
@@ -296,6 +315,15 @@ async def run_debate(conflict: dict[str, Any], use_rebuttal: bool = True) -> dic
     if not isinstance(rebuttal_assessment, dict):
         rebuttal_assessment = {"A_rebuttal": "weak", "B_rebuttal": "weak"}
 
+    hallucination_detected = verdict.get("hallucination_detected")
+    if not isinstance(hallucination_detected, dict):
+        hallucination_detected = {
+            "argument_a": False,
+            "argument_b": False,
+            "rebuttal_a": False,
+            "rebuttal_b": False,
+        }
+
     return {
         "field_name": field_name,
         "winner": winner,
@@ -303,6 +331,7 @@ async def run_debate(conflict: dict[str, Any], use_rebuttal: bool = True) -> dic
         "deciding_factor": str(verdict.get("deciding_factor") or "unresolvable"),
         "reasoning": str(verdict.get("reasoning") or ""),
         "rebuttal_assessment": rebuttal_assessment,
+        "hallucination_detected": hallucination_detected,
         "argument_a": argument_a,
         "argument_b": argument_b,
         "rebuttal_a": rebuttal_a,

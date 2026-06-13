@@ -207,6 +207,11 @@ def test_adjudicator_flags_unresolvable_debate(monkeypatch):
     assert all(entry["flag"] == "CONFLICTING SOURCES — verify manually" for entry in updated["adjudicated"])
     values = {entry["value"] for entry in updated["adjudicated"]}
     assert values == {"1.5 Avios per pound", "1.0 Avios per pound"}
+    assert len(updated["human_review_queue"]) == 1
+    review = updated["human_review_queue"][0]
+    assert review["field_name"] == "earn_rate_base"
+    assert "debate_transcript" in review
+    assert "judge_verdict" in review
 
 
 def packet(chunk_id: str, source_url: str, field: str, value, confidence: float) -> NormalizedObjectPacket:
@@ -331,7 +336,8 @@ def test_apply_adjudication_updates_field_report():
     assert by_path["earn_mechanics.base_earn_rate"].value == "5 points per dollar"
     assert by_path["earn_mechanics.base_earn_rate"].source_urls == ["https://blog.example"]
     assert by_path["earn_mechanics.base_earn_rate"].confidence == 0.76
-    assert by_path["burn_mechanics.point_value_cpp"].status == "ambiguous"
+    assert by_path["burn_mechanics.point_value_cpp"].status == "flagged"
     assert by_path["burn_mechanics.point_value_cpp"].confidence == 0.40
     assert updated.extracted_count == 1
-    assert updated.ambiguous_count == 1
+    assert updated.ambiguous_count == 0
+    assert updated.flagged_count == 1

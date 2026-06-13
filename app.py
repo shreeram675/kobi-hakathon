@@ -27,6 +27,7 @@ NODE_LABELS = {
     "chunker": "Semantic Chunker",
     "gemini_extractor": "Gemini Extraction",
     "normalizer": "Normalizer + Hashing",
+    "narration": "Narration",
 }
 
 INSPECTOR_NODES = (
@@ -525,6 +526,7 @@ _INSPECTOR_STAGES = [
     "firecrawl_scraper",
     "ingest",
     "adjudication",
+    "narration",
 ]
 
 _INSPECTOR_STAGE_LABELS = {
@@ -534,6 +536,7 @@ _INSPECTOR_STAGE_LABELS = {
     "firecrawl_scraper": "4. Firecrawl Scraper",
     "ingest": "5. Ingest  (Store → Chunk → Extract → Normalize)",
     "adjudication": "6. Conflict Adjudication",
+    "narration": "7. Narration  (Program Brief)",
 }
 
 
@@ -593,6 +596,14 @@ def _can_run(node: str) -> bool:
         return bool(fc and fc.successful_scrapes > 0)
     if node == "adjudication":
         return bool(state.get("normalized_packets"))
+    if node == "narration":
+        fr = state.get("field_report")
+        return bool(
+            fr and any(
+                e.value is not None and e.status in ("extracted", "flagged", "ambiguous")
+                for e in fr.entries
+            )
+        )
     return False
 
 
@@ -679,6 +690,28 @@ def _run_inspector_stage(node: str) -> None:
         delta = adjudication_node(state)
         new_state = {**state, **delta}
         out_snap = _pick(new_state, "adjudicated", "conflicts", "field_report", "errors")
+
+    elif node == "narration":
+        from graph import narrator_node as _narrate
+
+        fr = state.get("field_report")
+        usable_count = (
+            sum(1 for e in fr.entries if e.value is not None and e.status in ("extracted", "flagged", "ambiguous"))
+            if fr else 0
+        )
+        inp_snap = {
+            "program_name": state.get("program_name"),
+            "field_report_entries": len(fr.entries) if fr else 0,
+            "usable_extracted_fields": usable_count,
+        }
+        delta = _narrate(state)
+        new_state = {**state, **delta}
+        brief = new_state.get("final_brief")
+        out_snap = {
+            "word_count": brief.word_count if brief else 0,
+            "brief_preview": (brief.brief_text[:600] + "...") if brief and len(brief.brief_text) > 600 else (brief.brief_text if brief else None),
+            "errors": _safe_json(new_state.get("errors", [])),
+        }
 
     else:
         return
@@ -1066,6 +1099,33 @@ def render_inspector_tab() -> None:
                     )
 
 
+    # ── Stage 7: Narration ───────────────────────────────────────────────────
+    with st.container(border=True):
+        clicked = _inspector_stage_header("narration")
+        if clicked:
+            with st.spinner("Generating program brief..."):
+                _run_inspector_stage("narration")
+            st.rerun()
+        snap = st.session_state.inspector_snaps.get("narration")
+        if snap:
+            _inspector_show_errors(snap)
+            brief = (st.session_state.inspector_state or {}).get("final_brief")
+            c_in, c_out = st.columns(2)
+            with c_in:
+                with st.expander("Input", expanded=False):
+                    st.json(snap["input"])
+            with c_out:
+                with st.expander("Output summary", expanded=True):
+                    if brief:
+                        st.metric("Word count", brief.word_count)
+                        st.caption(f"Brief ID: {brief.brief_id}")
+                    else:
+                        st.info("No brief generated.")
+            if brief:
+                with st.expander("Full Program Brief", expanded=True):
+                    st.markdown(brief.brief_text)
+
+
 def preview_content(content: str | None, limit: int = 900) -> str | None:
     if not content:
         return None
@@ -1176,7 +1236,62 @@ with tabs[1]:
         st.info("Run and resolve both Program A and Program B before generating the final comparison.")
 
 with tabs[2]:
-    st.info("Converse starts after the final brief is generated. It answers follow-up questions only from stored claim JSON and brief JSON.")
+    if "converse_chat" not in st.session_state:
+        st.session_state.converse_chat = []
+
+    # Prefer the inspector state so the brief from stage 7 is immediately usable.
+    _active_state = st.session_state.get("inspector_state") or st.session_state.get("last_graph_state")
+    _brief = _active_state.get("final_brief") if _active_state else None
+    _field_report = _active_state.get("field_report") if _active_state else None
+
+    if _brief is None:
+        st.info(
+            "Run the full pipeline through **Stage 7 — Narration** in the Pipeline Inspector tab, "
+            "then return here to ask questions about the program."
+        )
+    else:
+        _prog_name = (_active_state or {}).get("program_name", "the program")
+        st.subheader(f"Converse: {_prog_name}")
+
+        with st.expander("Program Brief", expanded=True):
+            st.markdown(_brief.brief_text)
+            st.caption(f"{_brief.word_count} words · brief ID {_brief.brief_id}")
+
+        st.divider()
+
+        for _msg in st.session_state.converse_chat:
+            with st.chat_message(_msg["role"]):
+                st.markdown(_msg["content"])
+                if _msg.get("status"):
+                    _color = {"supported": "green", "conflicting": "orange"}.get(_msg["status"], "gray")
+                    st.caption(f":{_color}[{_msg['status']}]")
+
+        _question = st.chat_input("Ask a question about this program…")
+        if _question:
+            st.session_state.converse_chat.append({"role": "user", "content": _question})
+            with st.chat_message("user"):
+                st.markdown(_question)
+
+            with st.chat_message("assistant"):
+                with st.spinner("Answering…"):
+                    from converse import answer_question as _answer
+                    _result = _answer(_question, _brief, _field_report)
+                st.markdown(_result.answer)
+                _status_color = {"supported": "green", "conflicting": "orange"}.get(
+                    str(_result.status), "gray"
+                )
+                st.caption(f":{_status_color}[{_result.status}]")
+
+            st.session_state.converse_chat.append({
+                "role": "assistant",
+                "content": _result.answer,
+                "status": str(_result.status),
+            })
+            st.rerun()
+
+        if st.session_state.converse_chat and st.button("Clear conversation", key="converse_clear"):
+            st.session_state.converse_chat = []
+            st.rerun()
 
 with tabs[3]:
     render_inspector_tab()
