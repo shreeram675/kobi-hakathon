@@ -14,8 +14,9 @@
   --soft-amber: #fff2d8;
   --soft-red: #fde8e8;
   --soft-grey: #eef2f6;
-  --paper: #f6f8fb;
+  --paper: #f4f7fb;
   --line: #d9e2ec;
+  --canvas: #f0f4f8;
 }
 
 @layer base {
@@ -24,9 +25,9 @@
     text-rendering: optimizeLegibility;
   }
   body {
-    background-color: var(--paper);
+    background-color: var(--canvas);
     color: var(--ink);
-    font-feature-settings: "cv11", "ss01";
+    font-feature-settings: "cv11", "ss01", "cv02";
   }
   ::selection {
     background: rgba(15, 124, 125, 0.18);
@@ -37,6 +38,9 @@
   .panel {
     @apply rounded-card border border-line bg-white shadow-panel;
   }
+  .panel-dark {
+    @apply rounded-card border border-white/10 bg-navy/95 shadow-panel-lg;
+  }
   .pill {
     @apply inline-flex items-center gap-1.5 rounded-pill px-2.5 py-1 text-xs font-medium;
   }
@@ -45,16 +49,28 @@
     letter-spacing: -0.01em;
   }
   .glass-bar {
-    background: rgba(23, 50, 77, 0.92);
-    backdrop-filter: saturate(180%) blur(10px);
-    -webkit-backdrop-filter: saturate(180%) blur(10px);
+    background: rgba(18, 38, 60, 0.95);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+  }
+  .glass-card {
+    background: rgba(255,255,255,0.06);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .inset-ring {
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1);
+  }
+  .stage-header {
+    @apply flex items-center gap-2.5 mb-3;
   }
 }
 
 /* ---- thin scrollbars ---- */
 .scroll-thin::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 5px;
+  height: 5px;
 }
 .scroll-thin::-webkit-scrollbar-thumb {
   background: var(--line);
@@ -66,19 +82,25 @@
 
 /* ---- markdown brief ---- */
 .brief h2 {
-  @apply text-xl font-semibold text-navy mt-0 mb-3;
+  @apply text-lg font-semibold text-navy mt-0 mb-2.5 pb-2 border-b border-line;
 }
 .brief h3 {
-  @apply text-sm font-semibold uppercase tracking-wide text-teal mt-5 mb-1.5;
+  @apply text-[11px] font-bold uppercase tracking-[0.14em] text-teal mt-5 mb-2;
 }
 .brief p {
-  @apply text-sm leading-relaxed text-ink/90 mb-3;
+  @apply text-sm leading-relaxed text-ink/85 mb-3;
 }
 .brief strong {
-  @apply text-navy;
+  @apply font-semibold text-navy;
 }
 .brief em {
-  @apply text-ink/60 not-italic text-xs;
+  @apply text-ink/55 not-italic text-xs;
+}
+.brief ul {
+  @apply space-y-1 mb-3 ml-3;
+}
+.brief li {
+  @apply text-sm leading-relaxed text-ink/85 list-disc;
 }
 
 /* ---- reactflow theme overrides ---- */
@@ -108,4 +130,46 @@
 }
 .react-flow__node {
   cursor: pointer;
+}
+
+/* ---- hero gradient ---- */
+.hero-mesh {
+  background:
+    radial-gradient(70% 130% at 10% 0%, rgba(15,124,125,0.5) 0%, transparent 55%),
+    radial-gradient(55% 110% at 100% 100%, rgba(31,101,183,0.4) 0%, transparent 60%),
+    radial-gradient(40% 80% at 50% 50%, rgba(23,50,77,0.2) 0%, transparent 70%);
+}
+
+/* ---- data table ---- */
+.data-table th {
+  @apply px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wide text-ink/45 bg-soft-grey/50;
+}
+.data-table td {
+  @apply px-3 py-2.5 text-sm text-ink border-t border-line;
+}
+.data-table tr:hover td {
+  @apply bg-soft-grey/30;
+}
+
+/* ---- analyst card hover ---- */
+.analyst-card {
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.analyst-card:hover {
+  box-shadow: 0 0 0 2px rgba(15,124,125,0.25), 0 12px 28px rgba(23,50,77,0.1);
+  border-color: rgba(15,124,125,0.35);
+}
+
+/* ---- progress track ---- */
+.progress-track {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--teal), var(--blue));
+  transition: width 0.4s ease;
 }

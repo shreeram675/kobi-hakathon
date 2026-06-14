@@ -12,11 +12,17 @@ from providers import provider_for_stage
 from schemas import RetrievalOutput, RetrievedUrl, SearchQuery
 
 
-RESULTS_PER_QUERY = 5
+RESULTS_PER_QUERY = 3
+
+# Source types whose content rarely changes — official program pages, T&Cs, FAQs.
+# For all other source types, Tavily will be restricted to the past year to avoid
+# returning stale SEO articles that predate program changes.
+_STATIC_SOURCE_TYPES = frozenset({"official", "terms", "faq"})
+_RECENCY_DAYS = 365
 
 
 class TavilyClient(Protocol):
-    def search(self, query: str, max_results: int = RESULTS_PER_QUERY) -> list[dict[str, Any]]:
+    def search(self, query: str, max_results: int = RESULTS_PER_QUERY, days: int | None = None) -> list[dict[str, Any]]:
         """Return Tavily result dictionaries for one query."""
 
 
@@ -30,17 +36,26 @@ class TavilyRestClient:
         self.max_retries = max_retries
         self.retry_sleep_seconds = retry_sleep_seconds
 
-    def search(self, query: str, max_results: int = RESULTS_PER_QUERY) -> list[dict[str, Any]]:
+    def search(self, query: str, max_results: int = RESULTS_PER_QUERY, days: int | None = None) -> list[dict[str, Any]]:
         if not self.api_key:
             raise RuntimeError("Tavily retrieval is not configured. Set TAVILY_API_KEY.")
 
-        response = self._post_with_retries(query=query, max_results=max_results)
+        response = self._post_with_retries(query=query, max_results=max_results, days=days)
         response.raise_for_status()
         payload = response.json()
         return payload.get("results", [])
 
-    def _post_with_retries(self, query: str, max_results: int) -> requests.Response:
+    def _post_with_retries(self, query: str, max_results: int, days: int | None = None) -> requests.Response:
         last_error: requests.RequestException | None = None
+        body: dict[str, Any] = {
+            "query": query,
+            "max_results": max_results,
+            "search_depth": "advanced",
+            "include_answer": False,
+            "include_raw_content": False,
+        }
+        if days is not None:
+            body["days"] = days
         for attempt in range(self.max_retries + 1):
             try:
                 return requests.post(
@@ -49,13 +64,7 @@ class TavilyRestClient:
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
                     },
-                    json={
-                        "query": query,
-                        "max_results": max_results,
-                        "search_depth": "advanced",
-                        "include_answer": False,
-                        "include_raw_content": False,
-                    },
+                    json=body,
                     timeout=45,
                 )
             except requests.RequestException as exc:
@@ -79,7 +88,8 @@ def retrieve_urls(
     raw_count = 0
 
     for search_query in queries:
-        results = tavily.search(search_query.query, max_results=results_per_query)
+        days = None if search_query.source_type in _STATIC_SOURCE_TYPES else _RECENCY_DAYS
+        results = tavily.search(search_query.query, max_results=results_per_query, days=days)
         raw_count += len(results)
         for result in results[:results_per_query]:
             url = str(result.get("url") or "").strip()

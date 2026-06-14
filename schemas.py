@@ -130,6 +130,7 @@ class ProgramIdentity(KobieModel):
     brand: str
     domain: str
     country_or_region: str | None = None
+    program_subtype: str | None = None
     confidence: float = Field(ge=0, le=1)
     status: Literal["resolved"] = "resolved"
 
@@ -201,7 +202,8 @@ class ScrapedUrlBlock(KobieModel):
     canonical_url: str
     content: str | None = None
     title: str | None = None
-    scrape_status: Literal["success", "failed"] = "success"
+    published_date: str | None = None
+    scrape_status: Literal["success", "failed", "forbidden"] = "success"
     error: str | None = None
 
 
@@ -386,6 +388,7 @@ class ConverseAnswer(KobieModel):
     status: ClaimStatus
     cited_claim_ids: list[str] = Field(default_factory=list)
     missing_field_paths: list[str] = Field(default_factory=list)
+    source_urls: list[str] = Field(default_factory=list)
 
 
 class PipelineError(KobieModel):
@@ -405,6 +408,7 @@ class AgentState(TypedDict):
     brand: str | None
     domain: str | None
     country_or_region: str | None
+    program_subtype: NotRequired[str | None]
     query_generation_result: QueryGenerationOutput | None
     search_queries: list[SearchQuery]
     retrieval_result: RetrievalOutput | None
@@ -449,6 +453,7 @@ def build_initial_state(user_input: str, mode: RunMode = RunMode.SINGLE) -> Agen
         "brand": None,
         "domain": None,
         "country_or_region": None,
+        "program_subtype": None,
         "query_generation_result": None,
         "search_queries": [],
         "retrieval_result": None,

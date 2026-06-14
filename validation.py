@@ -88,8 +88,14 @@ If resolved:
   "brand": "...",
   "domain": "...",
   "country_or_region": "...",
+  "program_subtype": "B2B",
   "confidence": 0.95
 }
+
+The program_subtype field is OPTIONAL. Set it to "B2B" ONLY when the resolved program is
+explicitly a corporate/business-facing loyalty program (e.g. a program where membership
+is held by a company, not an individual, and rewards accrue to a business account).
+Omit program_subtype entirely for all standard consumer programs.
 
 If clarification is required:
 {
@@ -235,6 +241,7 @@ def _parse_verifier_output(
             brand=str(payload.get("brand") or payload["program_name"]),
             domain=normalize_domain(payload.get("domain")),
             country_or_region=payload.get("country_or_region"),
+            program_subtype=_parse_program_subtype(payload.get("program_subtype"), str(payload["program_name"])),
             confidence=confidence,
         )
         return ValidationResult(status="resolved", confidence=confidence, identity=identity)
@@ -268,6 +275,34 @@ def _parse_verifier_output(
         follow_up_questions=follow_ups,
         reason="Input verifier confidence is below 0.90.",
     )
+
+
+def _parse_program_subtype(llm_value: object, program_name: str) -> str | None:
+    """Detect B2B vs B2C from LLM output, with a deterministic keyword fallback."""
+    raw = str(llm_value or "").strip().upper()
+    if raw in {"B2B", "CORPORATE", "BUSINESS"}:
+        return "B2B"
+    if raw in {"B2C", "CONSUMER", "PERSONAL", "INDIVIDUAL"}:
+        return "B2C"
+    # Deterministic fallback: common B2B signals in program names across any domain.
+    # The LLM is the primary detector; this handles cases where the LLM omits program_subtype.
+    name_lower = program_name.lower()
+    b2b_signals = (
+        "for business",
+        "corporate",
+        " b2b",
+        "business extra",
+        "business rewards",
+        "perksplus",
+        " sme ",
+        "enterprise program",
+    )
+    if any(signal in name_lower for signal in b2b_signals):
+        return "B2B"
+    # Programs whose name ends with the bare word "business" (e.g. "AAdvantage Business")
+    if name_lower.rstrip().endswith(" business"):
+        return "B2B"
+    return None
 
 
 def normalize_domain(value: object) -> str:

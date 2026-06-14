@@ -273,11 +273,16 @@ def extract_from_chunks(
     schema_config: SchemaConfig,
     *,
     client: ExtractionClient | None = None,
+    extraction_context: dict | None = None,
 ) -> list[ExtractedObjectPacket]:
     """Extract runtime-schema object packets from chunks using Gemini.
 
     Chunks are packed into multi-chunk batches so one Gemini call covers
     several evidence units instead of paying one call per chunk.
+
+    extraction_context carries program-level metadata (program_subtype, program_name,
+    brand, reference_year) used to build entity isolation and temporal constraint rules
+    that are prepended to every extraction prompt in this run.
     """
 
     if not chunks or not schema_config.object_types:
@@ -294,7 +299,7 @@ def extract_from_chunks(
     if concurrency == 1:
         for batch in batches:
             try:
-                packets.extend(_extract_batch(batch, schema_config, client))
+                packets.extend(_extract_batch(batch, schema_config, client, extraction_context=extraction_context))
             except Exception as exc:
                 failures.append(str(exc))
         if not packets and failures:
@@ -302,7 +307,10 @@ def extract_from_chunks(
         return packets
 
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        futures = [executor.submit(_extract_batch, batch, schema_config, client) for batch in batches]
+        futures = [
+            executor.submit(_extract_batch, batch, schema_config, client, extraction_context)
+            for batch in batches
+        ]
         for future in as_completed(futures):
             try:
                 packets.extend(future.result())
@@ -464,6 +472,7 @@ def _extract_batch(
     batch: list[SemanticChunk],
     schema_config: SchemaConfig,
     client: ExtractionClient,
+    extraction_context: dict | None = None,
 ) -> list[ExtractedObjectPacket]:
     candidate_fields = sorted(
         {field for chunk in batch for field in select_candidate_fields(chunk, schema_config)}
@@ -472,7 +481,7 @@ def _extract_batch(
     if not extraction_schema.object_types:
         return []
 
-    prompt = build_extraction_prompt(batch, extraction_schema)
+    prompt = build_extraction_prompt(batch, extraction_schema, extraction_context=extraction_context)
     for _attempt in range(2):
         try:
             raw = client.complete_text(prompt)
@@ -486,7 +495,73 @@ def _extract_batch(
     return []
 
 
-def build_extraction_prompt(chunks: list[SemanticChunk], schema_config: SchemaConfig) -> str:
+def _build_extraction_context_preamble(context: dict) -> str:
+    """Build a constraint block prepended to every extraction prompt for this run."""
+    lines: list[str] = []
+
+    program_name = context.get("program_name")
+    brand = context.get("brand")
+    program_subtype = context.get("program_subtype")
+    reference_year = context.get("reference_year")
+
+    if program_name or brand:
+        parts = [p for p in [program_name, f"({brand})" if brand and brand != program_name else None] if p]
+        lines.append(f"TARGET PROGRAM: {' '.join(parts)}")
+
+    if program_subtype == "B2B":
+        lines += [
+            "PROGRAM SUBTYPE: CORPORATE / B2B",
+            "",
+            "ENTITY ISOLATION — CORPORATE PROGRAM:",
+            "This program is held and operated at a COMPANY level, not by an individual traveler.",
+            "Apply the following strict rules to every field in every chunk:",
+            "- REJECT individual consumer status tier names (e.g. Silver, Gold, Platinum, Diamond,",
+            "  Medallion, Premier, Executive). These belong to the consumer variant of the program.",
+            "- REJECT individual earn rates derived from personal credit card or co-brand card spend.",
+            "- REJECT individual consumer mobile app features (boarding passes, seat selection,",
+            "  personal trip maps, personal upgrade certificates). Extract only corporate account",
+            "  management tools, bulk booking portals, and administrator dashboards.",
+            "- REJECT point or mile transfer mechanics that move currency to an individual's",
+            "  hotel, airline, or retail account. Extract only company-level earn/burn.",
+            "- ACCEPT company spend thresholds, unique employee traveler counts, and corporate",
+            "  account qualification criteria.",
+            "- If a chunk mixes consumer and corporate content, extract ONLY the corporate portion.",
+            "  Mark any field where consumer and corporate data appear together as AMBIGUOUS.",
+        ]
+    elif program_subtype == "B2C":
+        lines += [
+            "PROGRAM SUBTYPE: CONSUMER / B2C",
+            "",
+            "ENTITY ISOLATION — CONSUMER PROGRAM:",
+            "- REJECT corporate enrollment requirements, company spend thresholds, or B2B account",
+            "  management features. Extract only individual member attributes.",
+        ]
+
+    if reference_year:
+        lines += [
+            "",
+            f"TEMPORAL CONTEXT: Current reference year is {reference_year}.",
+            "Apply the following rules to time-sensitive values:",
+            "- If a chunk contains a forward-looking statement about a year that has already passed",
+            f"  (e.g. 'will launch in 2022' when the reference year is {reference_year}), mark that",
+            "  field AMBIGUOUS — do not treat it as a current fact.",
+            "- Prefer evidence accompanied by an explicit date. When a numeric value (earn rate,",
+            "  threshold, point value, tier name) appears only in content that is visibly dated",
+            f"  more than two years before {reference_year}, reduce confidence to <= 0.5.",
+            "- Do NOT extrapolate or infer what the current value might be from an old source.",
+        ]
+
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n\n"
+
+
+def build_extraction_prompt(
+    chunks: list[SemanticChunk],
+    schema_config: SchemaConfig,
+    extraction_context: dict | None = None,
+) -> str:
+    context_preamble = _build_extraction_context_preamble(extraction_context) if extraction_context else ""
     schema_json = json.dumps(schema_config.model_dump(), ensure_ascii=True, indent=2)
     chunk_blocks = "\n\n".join(
         f"CHUNK {index + 1}\n"
@@ -499,7 +574,7 @@ def build_extraction_prompt(chunks: list[SemanticChunk], schema_config: SchemaCo
     return f"""
 You are a strict structured extraction engine.
 
-Use ONLY the chunk texts provided below. Do not use training knowledge. Do not
+{context_preamble}Use ONLY the chunk texts provided below. Do not use training knowledge. Do not
 guess or fill missing values. You may derive a value only when the chunk itself
 contains enough evidence to support that derivation, and the field must still
 include an exact supporting source_snippet copied from that chunk.

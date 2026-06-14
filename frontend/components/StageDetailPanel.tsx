@@ -33,11 +33,11 @@ function status(state: AgentState, id: StageId): StageStatus {
 
 function KeyVal({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="rounded-md border border-line bg-soft-grey/30 px-3 py-2">
-      <p className="text-[10px] font-medium uppercase tracking-wide text-ink/45">
+    <div className="rounded-[8px] border border-line bg-gradient-to-b from-soft-grey/40 to-white px-3 py-2.5">
+      <p className="text-[9.5px] font-bold uppercase tracking-[0.1em] text-ink/35">
         {label}
       </p>
-      <p className="mt-0.5 text-sm font-medium text-ink">{value ?? "—"}</p>
+      <p className="mt-1 text-[13px] font-semibold text-ink leading-tight">{value ?? <span className="text-ink/30 font-normal">—</span>}</p>
     </div>
   );
 }
@@ -157,7 +157,7 @@ export function StageDetailPanel({
                 { label: "Total queries", value: state.retrieval_result.total_queries, tone: "navy" },
                 { label: "Results / query", value: state.retrieval_result.requested_results_per_query, tone: "teal", hint: "requested" },
                 { label: "Raw results", value: state.retrieval_result.raw_result_count, tone: "blue" },
-                { label: "Unique URLs", value: state.retrieval_result.unique_result_count, tone: "green", hint: "after dedupe" },
+                { label: "Unique URLs", value: state.retrieval_result.unique_result_count, tone: "green", hint: "post-deduplication" },
               ]}
             />
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -185,38 +185,69 @@ export function StageDetailPanel({
 
       {/* ---- 4. SCRAPING ---- */}
       <StageSection stageId="firecrawl_scraper" status={status(state, "firecrawl_scraper")}>
-        {state.firecrawl_result && (
-          <div className="space-y-4">
-            <div className="grid gap-4 lg:grid-cols-[auto_1fr] lg:items-center">
-              <Donut
-                centerValue={state.firecrawl_result.total_urls}
-                centerLabel="URLs"
-                data={[
-                  { name: "Successful", value: state.firecrawl_result.successful_scrapes, color: TOKENS.green },
-                  { name: "Failed", value: state.firecrawl_result.failed_scrapes, color: TOKENS.red },
-                ]}
-              />
-              <div className="max-h-56 space-y-1 overflow-y-auto scroll-thin pr-1">
-                {(state.scraped_blocks ?? []).map((b, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs"
-                  >
-                    <Badge tone={b.scrape_status === "success" ? "green" : "red"} dot>
-                      {b.scrape_status}
-                    </Badge>
-                    <span className="min-w-0 flex-1 truncate text-ink/70">
-                      {truncate(b.title ?? b.url, 52)}
-                    </span>
-                    {b.error && (
-                      <span className="shrink-0 text-[10px] text-red">{b.error}</span>
-                    )}
-                  </div>
-                ))}
+        {(() => {
+          const blocks = state.scraped_blocks ?? [];
+          const fc = state.firecrawl_result;
+          const scrapeStatus = status(state, "firecrawl_scraper");
+          const totalUrls = fc?.total_urls ?? (state.retrieved_urls ?? []).length;
+          const successful = fc?.successful_scrapes ?? blocks.filter((b) => b.scrape_status === "success" && b.content).length;
+          const failed = fc?.failed_scrapes ?? blocks.filter((b) => b.scrape_status !== "success").length;
+          const pending = totalUrls - blocks.length;
+
+          if (blocks.length === 0 && scrapeStatus !== "running") return null;
+
+          const sorted = [...blocks].sort((a, b) => {
+            const aFailed = a.scrape_status !== "success" ? 0 : 1;
+            const bFailed = b.scrape_status !== "success" ? 0 : 1;
+            return aFailed - bFailed;
+          });
+
+          const donutData = [
+            { name: "Successful", value: successful, color: TOKENS.green },
+            { name: "Failed", value: failed, color: TOKENS.red },
+            ...(pending > 0 ? [{ name: "Pending", value: pending, color: "#D1D5DB" }] : []),
+          ];
+
+          return (
+            <div className="space-y-4">
+              <div className="grid gap-4 lg:grid-cols-[auto_1fr] lg:items-center">
+                <Donut
+                  centerValue={totalUrls}
+                  centerLabel="URLs"
+                  data={donutData}
+                />
+                <div className="max-h-56 space-y-1 overflow-y-auto scroll-thin pr-1">
+                  {sorted.map((b, i) => {
+                    const isFailed = b.scrape_status !== "success";
+                    return (
+                      <div
+                        key={i}
+                        className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs ${isFailed ? "border-red/30 bg-red/5" : "border-line"}`}
+                      >
+                        <Badge tone={b.scrape_status === "success" ? "green" : "red"} dot>
+                          {b.scrape_status}
+                        </Badge>
+                        <span className="min-w-0 flex-1 truncate text-ink/70">
+                          {truncate(b.title ?? b.url, 42)}
+                        </span>
+                        {isFailed && b.error && (
+                          <span className="shrink-0 max-w-[140px] truncate text-[10px] text-red/80" title={b.error}>
+                            {b.error}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {pending > 0 && (
+                    <div className="flex items-center gap-2 rounded-md border border-line/50 px-2.5 py-1.5 text-xs text-ink/40 italic">
+                      {pending} URL{pending === 1 ? "" : "s"} scraping…
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </StageSection>
 
       {/* ---- 5. CHUNKING ---- */}
@@ -306,7 +337,7 @@ export function StageDetailPanel({
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink/45">
                   Conflict records
                 </p>
-                <ConflictGrid conflicts={conflicts} claims={state.extracted_claims ?? []} />
+                <ConflictGrid conflicts={conflicts} />
               </div>
             </div>
           );

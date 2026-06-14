@@ -7,6 +7,7 @@ import os
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 import requests
@@ -27,8 +28,26 @@ INPUT
   "program_name": "<program_name>",
   "brand": "<brand>",
   "domain": "<optional_domain>",
-  "country_or_region": "<optional: IN | US | UK | GLOBAL>"
+  "country_or_region": "<optional: IN | US | UK | GLOBAL>",
+  "program_subtype": "<B2B | B2C | omitted>"
 }
+
+PROGRAM SUBTYPE RULES
+If program_subtype is "B2B":
+- This program is corporate/business-facing. Membership and rewards accrue to a COMPANY, not an individual.
+- ALL queries MUST explicitly target the corporate/business variant of the program.
+- Append qualifiers such as "for business", "corporate", or "business program" to queries as required.
+- Do NOT generate any query that would retrieve individual consumer program pages.
+- Tier structure queries must target COMPANY-LEVEL qualification criteria (annual company spend,
+  number of unique employee travelers, corporate transactions) — NOT individual elite status tiers.
+- Benefit queries must target CORPORATE account management tools and bulk booking perks.
+- Partnership queries must target the corporate earn/burn mechanics, not individual hotel point transfers.
+- Competitive position queries must name the actual B2B competitor programs (e.g. AAdvantage Business,
+  United PerksPlus, corporate hotel programs), not consumer programs.
+
+If program_subtype is "B2C" or is omitted:
+- This is a standard individual consumer program. Generate queries normally.
+- Do NOT pull in corporate program pages when searching.
 
 EXECUTION RULES
 1. Resolve the loyalty program category before generating queries.
@@ -339,7 +358,8 @@ def generate_queries(
         if _local_fallback_enabled() and status_code in TRANSIENT_GEMINI_STATUS_CODES:
             return build_local_query_generation_output(identity, reason=f"Gemini returned {status_code}")
         raise
-    return parse_query_generation_output(payload, identity=identity)
+    output = parse_query_generation_output(payload, identity=identity)
+    return output.model_copy(update={"queries": _anchor_year_to_volatile_queries(output.queries)})
 
 
 def build_local_query_generation_output(identity: ProgramIdentity, reason: str) -> QueryGenerationOutput:
@@ -365,6 +385,7 @@ def build_local_query_generation_output(identity: ProgramIdentity, reason: str) 
             )
         )
 
+    queries = _anchor_year_to_volatile_queries(queries)
     external_to_internal = {query.external_query_id: query.query_id for query in queries if query.external_query_id}
     field_query_map: dict[str, list[str]] = {}
     for query in queries:
@@ -386,12 +407,61 @@ def build_local_query_generation_output(identity: ProgramIdentity, reason: str) 
     )
 
 
+_YEAR_ANCHOR_TARGET_FIELDS = frozenset({
+    "earn_rate_base",
+    "base_earn_rate",
+    "tier_thresholds",
+    "point_value_cpp",
+    "recent_changes_last_6_months",
+    "redemption_thresholds",
+    "app_store_rating",
+    "play_store_rating",
+    "app_ratings",
+    "membership_count",
+})
+
+_YEAR_ANCHOR_SOURCE_TYPES = frozenset({
+    "news",
+    "valuation",
+    "app_reviews",
+    "forums",
+    "forum",
+    "competitors",
+})
+
+
+def _anchor_year_to_volatile_queries(queries: list[SearchQuery]) -> list[SearchQuery]:
+    """Append the current year to queries targeting high-volatility or time-sensitive fields.
+
+    This prevents search engines from surfacing stale SEO articles when the program
+    being researched has recently changed its earn rates, tier thresholds, or app ratings.
+    Queries that already contain a four-digit year are left unchanged.
+    """
+    year = str(datetime.now(timezone.utc).year)
+    result: list[SearchQuery] = []
+    for query in queries:
+        needs_year = (
+            query.source_type in _YEAR_ANCHOR_SOURCE_TYPES
+            or any(f in _YEAR_ANCHOR_TARGET_FIELDS for f in query.target_fields)
+        )
+        if needs_year and not re.search(r"\b20\d{2}\b", query.query):
+            words = query.query.split()
+            if len(words) < 10:
+                new_text = f"{query.query} {year}"
+            else:
+                new_text = " ".join(words[:9]) + f" {year}"
+            query = query.model_copy(update={"query": new_text})
+        result.append(query)
+    return result
+
+
 def build_query_generator_prompt(identity: ProgramIdentity) -> str:
     prompt_identity = {
         "program_name": identity.program_name,
         "brand": identity.brand,
         "domain": identity.domain,
         "country_or_region": identity.country_or_region or "GLOBAL",
+        "program_subtype": identity.program_subtype or "B2C",
     }
     return (
         f"{QUERY_GENERATOR_SYSTEM_PROMPT}\n\n"

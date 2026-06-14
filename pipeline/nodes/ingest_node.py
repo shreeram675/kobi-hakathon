@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -62,7 +63,13 @@ def ingest_node(
         brand=state.get("brand"),
     )
 
-    extracted_packets = extract_from_chunks(extraction_chunks, config, client=extractor_client)
+    extraction_context = _build_extraction_context(state)
+    extracted_packets = extract_from_chunks(
+        extraction_chunks,
+        config,
+        client=extractor_client,
+        extraction_context=extraction_context,
+    )
     normalized_packets = [normalize_packet(packet, config) for packet in extracted_packets]
     persist_normalized_packets(normalized_packets, db_path=db_path)
     field_report = build_field_report(normalized_packets, config, entity_name=state.get("program_name"))
@@ -130,3 +137,13 @@ def _resolve_target_fields(field_name: str, valid_fields: set[str]) -> list[str]
         return [normalized]
     alias_key = normalized.lower().replace(" ", "_")
     return [field for field in FIELD_ALIASES.get(alias_key, ()) if field in valid_fields]
+
+
+def _build_extraction_context(state: AgentState) -> dict[str, Any]:
+    """Build the context dict passed to the extraction prompt for every batch in this run."""
+    ctx: dict[str, Any] = {"reference_year": datetime.now(timezone.utc).year}
+    for key in ("program_name", "brand", "program_subtype"):
+        value = state.get(key)
+        if value is not None:
+            ctx[key] = value
+    return ctx

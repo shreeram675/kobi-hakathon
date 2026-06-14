@@ -7,7 +7,7 @@ import time
 import requests
 
 from providers import provider_for_stage
-from schemas import AgentState, BriefOutput, FieldReport, PipelineError, new_id, now_iso
+from schemas import AgentState, BriefOutput, FieldReport, PipelineError, SchemaCoverage, new_id, now_iso
 
 
 _SECTION_ORDER = [
@@ -100,7 +100,25 @@ def narrator_node(state: AgentState) -> dict:
         brief_text=brief_text,
         word_count=len(brief_text.split()),
     )
-    return {"final_brief": brief, "updated_at": now_iso()}
+
+    coverage = SchemaCoverage(
+        total_fields=len(field_report.entries) or SchemaCoverage.model_fields["total_fields"].default,
+        supported_fields=field_report.extracted_count,
+        manual_review_fields=field_report.ambiguous_count + field_report.flagged_count,
+        null_fields=field_report.not_found_count,
+        rejected_fields=0,
+    )
+    total = coverage.total_fields or 1
+    data_quality = round(
+        (coverage.supported_fields + coverage.manual_review_fields * 0.3) / total, 2
+    )
+
+    return {
+        "final_brief": brief,
+        "schema_coverage": coverage,
+        "data_quality": data_quality,
+        "updated_at": now_iso(),
+    }
 
 
 def _generate_brief(field_report: FieldReport, program_name: str, brand: str | None) -> str:

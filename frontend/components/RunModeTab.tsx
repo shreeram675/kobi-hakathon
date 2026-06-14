@@ -1,13 +1,12 @@
 "use client";
 
-import { GitCompareArrows, MessagesSquare, Sparkles } from "lucide-react";
+import { GitCompareArrows, Sparkles } from "lucide-react";
 import { cn } from "@/lib/format";
 import type { RunMode } from "@/lib/types";
 
 const MODES: { id: RunMode; label: string; icon: typeof Sparkles }[] = [
   { id: "single", label: "Single", icon: Sparkles },
   { id: "compare", label: "Compare", icon: GitCompareArrows },
-  { id: "converse", label: "Converse", icon: MessagesSquare },
 ];
 
 /** Single / Compare / Converse switcher (glass pill group for the dark topbar). */

@@ -23,6 +23,7 @@ from schemas import (
     BriefOutput,
     FieldReport,
     FieldReportEntry,
+    FirecrawlScrapeOutput,
     build_initial_state,
     new_id,
     now_iso,
@@ -209,8 +210,20 @@ def _run_single_pipeline(record: RunRecord) -> bool:
 
     # 4. Firecrawl Scraper
     _mark(record, "firecrawl_scraper", "running")
+    total_scrape_urls = len(state.get("retrieved_urls", []))
+
+    def _on_scrape_progress(completed_blocks, total):
+        successful = sum(1 for b in completed_blocks if b.scrape_status == "success" and b.content)
+        partial = FirecrawlScrapeOutput(
+            total_urls=total,
+            successful_scrapes=successful,
+            failed_scrapes=len(completed_blocks) - successful,
+            blocks=completed_blocks,
+        )
+        _apply(record, {"scraped_blocks": completed_blocks, "firecrawl_result": partial})
+
     try:
-        delta = firecrawl_node(state)
+        delta = firecrawl_node(state, on_progress=_on_scrape_progress)
         state = _apply(record, delta)
         fc = state.get("firecrawl_result")
         if fc and fc.successful_scrapes > 0:
@@ -324,7 +337,7 @@ def run_pipeline(record: RunRecord) -> None:
     else:
         success = _run_single_pipeline(record)
 
-        if success and record.mode == "converse":
+        if success:
             program_name = record.state.get("program_name") or record.user_input
             with record.lock:
                 record.conversation = [

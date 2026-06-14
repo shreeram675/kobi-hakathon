@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, CornerDownLeft, User } from "lucide-react";
+import { Bot, CornerDownLeft, ExternalLink, User } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/textarea";
@@ -125,12 +125,30 @@ function Bubble({ turn }: { turn: ConverseTurn }) {
       >
         <p className="leading-relaxed">{turn.message}</p>
         {turn.answer && (
-          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-line/60 pt-2">
-            <StatusBadge status={turn.answer.status} />
-            {turn.answer.cited_claim_ids.length > 0 && (
-              <span className="text-[10px] text-ink/45">
-                {turn.answer.cited_claim_ids.length} claim cited
-              </span>
+          <div className="mt-2 space-y-1.5 border-t border-line/60 pt-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={turn.answer.status} />
+              {turn.answer.cited_claim_ids.length > 0 && (
+                <span className="text-[10px] text-ink/45">
+                  {turn.answer.cited_claim_ids.length} claim{turn.answer.cited_claim_ids.length === 1 ? "" : "s"} cited
+                </span>
+              )}
+            </div>
+            {(turn.answer.source_urls ?? []).length > 0 && (
+              <div className="flex flex-col gap-0.5">
+                {(turn.answer.source_urls ?? []).map((url) => (
+                  <a
+                    key={url}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[10px] text-teal hover:underline truncate max-w-full"
+                  >
+                    <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                    {url}
+                  </a>
+                ))}
+              </div>
             )}
           </div>
         )}

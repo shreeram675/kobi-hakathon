@@ -155,7 +155,8 @@ def adjudicator_node(state: AgentState) -> AgentState:
             entries = _entries_from_debate(conflict, result)
             adjudicated.extend(entries)
             if result.get("winner") == "FLAG":
-                human_review_items.append(_build_human_review_item(conflict, result, run_id))
+                score_gap = conflict_records[rec_idx].get("score_gap", 0.0)
+                human_review_items.append(_build_human_review_item(conflict, result, run_id, score_gap))
                 conflict_records[rec_idx]["resolution_status"] = "manual_review_needed"
                 conflict_records[rec_idx]["judge_reason"] = result.get("reasoning") or FLAG_TEXT
             else:
@@ -179,13 +180,20 @@ def adjudicator_node(state: AgentState) -> AgentState:
 
 
 def _build_human_review_item(
-    conflict: dict[str, Any], debate_result: dict[str, Any], run_id: str
+    conflict: dict[str, Any], debate_result: dict[str, Any], run_id: str, score_gap: float = 0.0
 ) -> dict[str, Any]:
     """Build a structured human-review queue entry when the judge returns FLAG."""
+    field_path = str(conflict["field_name"])
+    claim_a_id = str(conflict["claim_a"].get("claim_id") or "")
+    claim_b_id = str(conflict["claim_b"].get("claim_id") or "")
     return {
         "review_id": new_id("review"),
         "run_id": run_id,
-        "field_name": str(conflict["field_name"]),
+        "field_path": field_path,
+        "field_name": field_path,
+        "reason": debate_result.get("reasoning") or FLAG_TEXT,
+        "claim_ids": [cid for cid in [claim_a_id, claim_b_id] if cid],
+        "score_gap": round(score_gap, 4),
         "claim_a": conflict["claim_a"],
         "claim_b": conflict["claim_b"],
         "volatility": conflict.get("volatility"),

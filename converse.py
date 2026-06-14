@@ -55,7 +55,26 @@ def answer_question(
     else:
         status = ClaimStatus.SUPPORTED
 
-    return ConverseAnswer(answer=answer_text, status=status)
+    source_urls = _extract_source_urls(answer_text, field_report)
+
+    return ConverseAnswer(answer=answer_text, status=status, source_urls=source_urls)
+
+
+def _extract_source_urls(answer_text: str, field_report: FieldReport | None) -> list[str]:
+    """Return deduplicated source URLs for field paths cited in the answer."""
+    if not field_report:
+        return []
+    import re
+    cited_paths = set(re.findall(r"\(([a-z_]+\.[a-z_]+(?:\.[a-z_]+)*)\)", answer_text))
+    seen: set[str] = set()
+    urls: list[str] = []
+    for entry in field_report.entries:
+        if entry.field_path in cited_paths or not cited_paths:
+            for url in (entry.source_urls or []):
+                if url and url not in seen:
+                    seen.add(url)
+                    urls.append(url)
+    return urls[:5]  # cap at 5 to keep the UI tidy
 
 
 def _build_field_data(field_report: FieldReport) -> str:

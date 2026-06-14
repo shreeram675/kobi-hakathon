@@ -21,7 +21,7 @@ export type RunMode = "single" | "compare" | "converse";
 
 export type ValidationStatus = "resolved" | "needs_clarification" | "rejected";
 
-export type ScrapeStatus = "success" | "failed";
+export type ScrapeStatus = "success" | "failed" | "forbidden";
 
 export type ExtractedFieldStatus = "EXTRACTED" | "NOT_FOUND" | "AMBIGUOUS";
 
@@ -312,6 +312,7 @@ export interface ConverseAnswer {
   status: ClaimStatus;
   cited_claim_ids: string[];
   missing_field_paths: string[];
+  source_urls?: string[];
 }
 
 export interface PipelineError {

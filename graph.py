@@ -8,7 +8,7 @@ from typing import Literal
 
 from langgraph.graph import END, START, StateGraph
 
-from firecrawl_scraper import scrape_retrieved_urls
+from firecrawl_scraper import scrape_retrieved_urls, ForbiddenError
 from pipeline.nodes.ingest_node import ingest_node as post_firecrawl_ingest_node
 from query_generator import generate_queries
 from retrieval import retrieve_urls
@@ -24,11 +24,15 @@ def input_validator_node(state: AgentState) -> dict:
         "updated_at": now_iso(),
     }
 
-    if validation_result.status != "resolved" or validation_result.identity is None:
+    if validation_result.status == "rejected":
         update["errors"] = [
             *state["errors"],
-            PipelineError(stage="input_validator", message=validation_result.reason or "Input needs clarification."),
+            PipelineError(stage="input_validator", message=validation_result.reason or "Input could not be resolved."),
         ]
+        return update
+
+    if validation_result.status != "resolved" or validation_result.identity is None:
+        # needs_clarification — awaiting follow-up answers, not an error
         return update
 
     identity = validation_result.identity
@@ -39,6 +43,7 @@ def input_validator_node(state: AgentState) -> dict:
             "brand": identity.brand,
             "domain": identity.domain,
             "country_or_region": identity.country_or_region,
+            "program_subtype": identity.program_subtype,
         }
     )
     return update
@@ -109,8 +114,9 @@ def retrieval_node(state: AgentState) -> dict:
     }
 
 
-def firecrawl_node(state: AgentState) -> dict:
-    urls = select_urls_for_firecrawl(state.get("retrieved_urls", []))
+def firecrawl_node(state: AgentState, on_progress=None) -> dict:
+    all_retrieved = state.get("retrieved_urls", [])
+    urls = select_urls_for_firecrawl(all_retrieved)
     if not urls:
         return {
             "errors": [
@@ -121,7 +127,7 @@ def firecrawl_node(state: AgentState) -> dict:
         }
 
     try:
-        firecrawl_result = scrape_retrieved_urls(urls)
+        firecrawl_result = scrape_retrieved_urls(urls, on_progress=on_progress)
     except Exception as exc:
         return {
             "errors": [
@@ -130,6 +136,21 @@ def firecrawl_node(state: AgentState) -> dict:
             ],
             "updated_at": now_iso(),
         }
+
+    # Replace forbidden URLs with fallbacks from the unselected pool (priority order).
+    selected_canonicals = {u.canonical_url for u in urls}
+    fallback_pool = [u for u in all_retrieved if u.canonical_url not in selected_canonicals]
+    forbidden_indices = [i for i, b in enumerate(firecrawl_result.blocks) if b.scrape_status == "forbidden"]
+
+    if forbidden_indices and fallback_pool:
+        fallbacks_to_try = fallback_pool[: len(forbidden_indices)]
+        fallback_result = scrape_retrieved_urls(fallbacks_to_try)
+        for slot_idx, fallback_block in zip(forbidden_indices, fallback_result.blocks):
+            firecrawl_result.blocks[slot_idx] = fallback_block
+
+        successful = sum(1 for b in firecrawl_result.blocks if b.scrape_status == "success" and b.content)
+        firecrawl_result.successful_scrapes = successful
+        firecrawl_result.failed_scrapes = firecrawl_result.total_urls - successful
 
     all_failed = firecrawl_result.total_urls > 0 and firecrawl_result.successful_scrapes == 0
     failed_message = _firecrawl_all_failed_message(firecrawl_result) if all_failed else None
