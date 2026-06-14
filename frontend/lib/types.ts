@@ -229,6 +229,10 @@ export interface ConflictRecord {
   score_gap: number; // >= 0
   resolution_status: ConflictResolution;
   judge_reason: string;
+  value_a?: string | null;
+  value_b?: string | null;
+  url_a?: string | null;
+  url_b?: string | null;
 }
 
 // ---- Adjudication / debate ----
@@ -254,6 +258,10 @@ export interface AdjudicatedClaim {
   decision: string;
   rounds: DebateRound[];
   confidence: number;
+  value_a?: string | null;
+  value_b?: string | null;
+  url_a?: string | null;
+  url_b?: string | null;
 }
 
 export interface HumanReviewItem {

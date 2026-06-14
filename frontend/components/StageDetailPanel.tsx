@@ -282,26 +282,35 @@ export function StageDetailPanel({
           ) : undefined
         }
       >
-        <div className="space-y-4">
-          {(state.conflicts ?? []).length > 0 && (
-            <AlertBanner level="amber" title={`${(state.conflicts ?? []).length} field conflicts detected`}>
-              Conflicting claims are routed to adjudication; high score-gap items
-              escalate to human review.
-            </AlertBanner>
-          )}
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink/45">
-              {(state.extracted_claims ?? []).length} extracted claims
-            </p>
-            <ClaimsTable claims={state.extracted_claims ?? []} />
-          </div>
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink/45">
-              Conflict records
-            </p>
-            <ConflictGrid conflicts={state.conflicts ?? []} />
-          </div>
-        </div>
+        {(() => {
+          const conflicts = state.conflicts ?? [];
+          const conflictFields = new Set(conflicts.map((c) => c.field_path));
+          const conflictingClaims = (state.extracted_claims ?? []).filter((c) =>
+            conflictFields.has(c.field_path),
+          );
+          return (
+            <div className="space-y-4">
+              {conflicts.length > 0 && (
+                <AlertBanner level="amber" title={`${conflicts.length} field conflicts detected`}>
+                  Conflicting claims are routed to adjudication; high score-gap items
+                  escalate to human review.
+                </AlertBanner>
+              )}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink/45">
+                  {conflictingClaims.length} conflicting claims
+                </p>
+                <ClaimsTable claims={conflictingClaims} />
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink/45">
+                  Conflict records
+                </p>
+                <ConflictGrid conflicts={conflicts} claims={state.extracted_claims ?? []} />
+              </div>
+            </div>
+          );
+        })()}
       </StageSection>
 
       {/* ---- 8. ADJUDICATION / DEBATE ---- */}

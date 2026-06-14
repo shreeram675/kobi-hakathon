@@ -606,6 +606,10 @@ function buildDebate(
       decision: rounds[5].argument,
       rounds,
       confidence: conflict.resolution_status === "manual_review_needed" ? 0.4 : 0.82,
+      value_a: `${labels.a} reported value for ${fieldLabel(conflict.field_path)}`,
+      value_b: `${labels.b} reported value for ${fieldLabel(conflict.field_path)}`,
+      url_a: `https://${labels.a.toLowerCase().replace(/\s+/g, "")}.com/loyalty`,
+      url_b: `https://${labels.b.toLowerCase().replace(/\s+/g, "")}.com/loyalty`,
     });
     if (conflict.resolution_status === "manual_review_needed") {
       review.push({

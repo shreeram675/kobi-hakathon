@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from typing import Any, Protocol
 
@@ -227,13 +228,47 @@ class QueryGeneratorClient(Protocol):
 TRANSIENT_GEMINI_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
+class _QueryGenKeyPool:
+    """Round-robin across QUERY_GENERATOR_API_KEYS; advances on 429."""
+
+    def __init__(self) -> None:
+        keys = self._load_keys()
+        if not keys:
+            raise RuntimeError("Query generator is not configured. Set GEMINI_API_KEY.")
+        self._keys = keys
+        self._index = 0
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _load_keys() -> list[str]:
+        multi = os.getenv("QUERY_GENERATOR_API_KEYS", "")
+        keys = [k.strip() for k in multi.split(",") if k.strip()]
+        if not keys:
+            provider = provider_for_stage("query_generator")
+            if provider.api_key:
+                keys = [provider.api_key]
+        return keys
+
+    def current(self) -> str:
+        with self._lock:
+            return self._keys[self._index % len(self._keys)]
+
+    def advance(self) -> str:
+        with self._lock:
+            self._index = (self._index + 1) % len(self._keys)
+            return self._keys[self._index]
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+
 class GeminiQueryGeneratorClient:
-    """Google Gemini generateContent REST client."""
+    """Google Gemini generateContent REST client with key-pool rotation on 429."""
 
     def __init__(self, max_retries: int | None = None, retry_sleep_seconds: float = 1.0) -> None:
         provider = provider_for_stage("query_generator")
         self.api_base = (provider.api_base or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
-        self.api_key = provider.api_key
+        self._key_pool = _QueryGenKeyPool()
         self.model = provider.resolved_model or "gemini-2.5-flash"
         self.models = _ordered_models(
             self.model,
@@ -243,9 +278,6 @@ class GeminiQueryGeneratorClient:
         self.retry_sleep_seconds = retry_sleep_seconds
 
     def complete_json(self, prompt: str) -> dict[str, Any]:
-        if not self.api_key:
-            raise RuntimeError("Query generator is not configured. Set GEMINI_API_KEY.")
-
         response = self._post_with_retries(prompt)
         payload = response.json()
         content = payload["candidates"][0]["content"]["parts"][0]["text"]
@@ -255,22 +287,26 @@ class GeminiQueryGeneratorClient:
         last_error: requests.HTTPError | None = None
         for model_index, model in enumerate(self.models):
             for attempt in range(self.max_retries + 1):
+                api_key = self._key_pool.current()
                 response = requests.post(
                     f"{self.api_base}/models/{model}:generateContent",
                     headers={
-                        "x-goog-api-key": self.api_key,
+                        "x-goog-api-key": api_key,
                         "Content-Type": "application/json",
                     },
                     json={
                         "contents": [{"parts": [{"text": prompt}]}],
                         "generationConfig": {
-                        "temperature": 0.2,
-                        "responseMimeType": "application/json",
-                        "thinkingConfig": {"thinkingBudget": 0},
+                            "temperature": 0.2,
+                            "responseMimeType": "application/json",
+                            "thinkingConfig": {"thinkingBudget": 0},
+                        },
                     },
-                },
                     timeout=60,
                 )
+                if response.status_code == 429:
+                    self._key_pool.advance()
+
                 if response.status_code not in TRANSIENT_GEMINI_STATUS_CODES:
                     response.raise_for_status()
                     self.model = model

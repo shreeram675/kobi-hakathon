@@ -1,6 +1,6 @@
 "use client";
 
-import { Gavel, Scale, Swords, Trophy } from "lucide-react";
+import { ExternalLink, Gavel, Scale, Swords, Trophy } from "lucide-react";
 import { Collapsible } from "@/components/ui/collapsible";
 import { ResolutionBadge } from "./badges";
 import { Badge } from "@/components/ui/badge";
@@ -85,6 +85,45 @@ function RoundCard({
   );
 }
 
+function ClaimVsRow({ claim }: { claim: AdjudicatedClaim }) {
+  if (!claim.value_a && !claim.value_b) return null;
+  return (
+    <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-start gap-2 rounded-md border border-line bg-white px-3 py-2.5">
+      <div className="min-w-0">
+        <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal">Claim A</p>
+        <p className="text-sm font-semibold text-ink break-words">{claim.value_a || "—"}</p>
+        {claim.url_a && (
+          <a
+            href={claim.url_a}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 flex items-center gap-1 text-[10px] text-ink/40 hover:text-teal truncate"
+          >
+            <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+            <span className="truncate">{claim.url_a.replace(/^https?:\/\//, "")}</span>
+          </a>
+        )}
+      </div>
+      <span className="mt-1 text-xs font-bold text-ink/30 self-center">vs</span>
+      <div className="min-w-0">
+        <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue">Claim B</p>
+        <p className="text-sm font-semibold text-ink break-words">{claim.value_b || "—"}</p>
+        {claim.url_b && (
+          <a
+            href={claim.url_b}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 flex items-center gap-1 text-[10px] text-ink/40 hover:text-blue truncate"
+          >
+            <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+            <span className="truncate">{claim.url_b.replace(/^https?:\/\//, "")}</span>
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DebateBlock({
   claim,
   labels,
@@ -115,6 +154,7 @@ function DebateBlock({
         </div>
       }
     >
+      <ClaimVsRow claim={claim} />
       <div className="mt-3 space-y-2 border-l border-dashed border-line pl-1">
         {(claim.rounds ?? []).map((r) => (
           <RoundCard key={r.round} round={r} labels={labels} />
