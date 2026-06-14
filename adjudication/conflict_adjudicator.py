@@ -158,7 +158,11 @@ def _build_human_review_item(
 
 
 async def _run_debates(conflicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    # Debates run concurrently; the engine's semaphore caps Groq calls at 3.
+    # Reset the semaphore so it binds to the current event loop created by
+    # asyncio.run() — avoids "bound to a different event loop" on repeated runs.
+    import adjudication.debate_engine as _de
+    _de._GROQ_SEMAPHORE = asyncio.Semaphore(3)
+    # Debates run concurrently; the semaphore caps Groq calls at 3.
     return list(await asyncio.gather(*(run_debate(conflict, use_rebuttal=True) for conflict in conflicts)))
 
 

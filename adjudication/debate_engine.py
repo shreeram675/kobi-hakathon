@@ -11,13 +11,26 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
+from collections import Counter
 from typing import Any
 
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-
 from providers import provider_for_stage
+
+
+def _cosine_similarity(text_a: str, text_b: str) -> float:
+    """Bag-of-words cosine similarity — avoids sklearn dependency."""
+    def bow(t: str) -> Counter:
+        return Counter(re.findall(r"\w+", t.lower()))
+
+    a, b = bow(text_a), bow(text_b)
+    if not a or not b:
+        return 0.0
+    dot = sum(a[w] * b[w] for w in a if w in b)
+    mag_a = math.sqrt(sum(v * v for v in a.values()))
+    mag_b = math.sqrt(sum(v * v for v in b.values()))
+    return dot / (mag_a * mag_b) if mag_a and mag_b else 0.0
 
 
 DEFAULT_DEBATE_MODEL = "llama3-70b-8192"
@@ -36,7 +49,9 @@ JUDGE_MAX_TOKENS = 350
 
 # Groq free-tier rate limits crash on bursts; cap in-flight calls at 3 so
 # concurrent debates across multiple conflicts queue instead of failing.
-_GROQ_SEMAPHORE = asyncio.Semaphore(3)
+# Semaphore is created lazily per event-loop run to avoid "bound to a different
+# event loop" errors when asyncio.run() creates a new loop each invocation.
+_GROQ_SEMAPHORE: asyncio.Semaphore | None = None
 _GROQ_CLIENT = None
 
 NO_REBUTTAL_NOTE = "No rebuttal — arguments not sufficiently differentiated."
@@ -190,8 +205,8 @@ def _debate_model() -> str:
 
 async def call_groq(prompt: str, temperature: float, max_tokens: int) -> str:
     """Single Groq chat completion; semaphore-gated, no retries (caller handles)."""
-
-    async with _GROQ_SEMAPHORE:
+    semaphore = _GROQ_SEMAPHORE or asyncio.Semaphore(3)
+    async with semaphore:
         response = await _groq_client().chat.completions.create(
             model=_debate_model(),
             messages=[{"role": "user", "content": prompt}],
@@ -211,11 +226,7 @@ def arguments_are_differentiated(argument_a: str, argument_b: str) -> bool:
 
     if not argument_a.strip() or not argument_b.strip():
         return False
-    try:
-        matrix = TfidfVectorizer().fit_transform([argument_a, argument_b])
-    except ValueError:
-        return False
-    similarity = float(cosine_similarity(matrix[0:1], matrix[1:2])[0][0])
+    similarity = _cosine_similarity(argument_a, argument_b)
     return similarity < SIMILARITY_THRESHOLD
 
 

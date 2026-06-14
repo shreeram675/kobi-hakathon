@@ -66,9 +66,9 @@ def _first_env_value(
 STAGE_PROVIDERS: dict[str, ProviderConfig] = {
     "validation": ProviderConfig(
         "input_verifier",
-        model=os.getenv("INPUT_VERIFIER_MODEL"),
-        api_key_env="INPUT_VERIFIER_API_KEY",
-        api_base_env="INPUT_VERIFIER_API_BASE",
+        model=os.getenv("INPUT_VERIFIER_MODEL", "gemini-2.5-flash"),
+        api_key_env=("INPUT_VERIFIER_API_KEY", "GEMINI_API_KEY"),
+        api_base_env=("INPUT_VERIFIER_API_BASE", "GEMINI_API_BASE"),
     ),
     "query_generator": ProviderConfig(
         "query_generator",
