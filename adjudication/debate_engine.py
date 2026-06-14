@@ -33,7 +33,7 @@ def _cosine_similarity(text_a: str, text_b: str) -> float:
     return dot / (mag_a * mag_b) if mag_a and mag_b else 0.0
 
 
-DEFAULT_DEBATE_MODEL = "llama3-70b-8192"
+DEFAULT_DEBATE_MODEL = "llama-3.3-70b-versatile"
 SIMILARITY_THRESHOLD = 0.80
 
 # Advocate temperature 0.0: must stay strictly grounded in provided metadata.
@@ -52,7 +52,11 @@ JUDGE_MAX_TOKENS = 350
 # Semaphore is created lazily per event-loop run to avoid "bound to a different
 # event loop" errors when asyncio.run() creates a new loop each invocation.
 _GROQ_SEMAPHORE: asyncio.Semaphore | None = None
-_GROQ_CLIENT = None
+
+# Round-robin key pool — populated lazily from GROQ_API_KEYS (comma-separated)
+# or individual DEBATE_API_KEY / DEBATE_API_KEY_B / GROQ_API_KEY env vars.
+_CLIENT_POOL: list | None = None
+_POOL_COUNTER: int = 0
 
 NO_REBUTTAL_NOTE = "No rebuttal — arguments not sufficiently differentiated."
 
@@ -187,33 +191,93 @@ Output ONLY valid JSON, no preamble, no markdown fences:
 }}"""
 
 
-def _groq_client():
-    global _GROQ_CLIENT
-    if _GROQ_CLIENT is None:
-        from groq import AsyncGroq
+def _build_client_pool() -> list:
+    """Build a round-robin pool of AsyncGroq clients from all available keys."""
+    global _CLIENT_POOL
+    if _CLIENT_POOL is not None:
+        return _CLIENT_POOL
+    import os
+    from groq import AsyncGroq
 
-        api_key = provider_for_stage("debate").api_key
-        if not api_key:
-            raise RuntimeError("Debate engine is not configured. Set DEBATE_API_KEY or GROQ_API_KEY.")
-        _GROQ_CLIENT = AsyncGroq(api_key=api_key)
-    return _GROQ_CLIENT
+    raw = os.getenv("GROQ_API_KEYS", "").strip()
+    if raw:
+        keys = [k.strip() for k in raw.split(",") if k.strip()]
+    else:
+        seen: set[str] = set()
+        keys = []
+        for var in ("DEBATE_API_KEY", "DEBATE_API_KEY_B", "GROQ_API_KEY"):
+            k = os.getenv(var, "").strip()
+            if k and k not in seen:
+                seen.add(k)
+                keys.append(k)
+        fallback = provider_for_stage("debate").api_key
+        if fallback and fallback not in seen:
+            keys.append(fallback)
+
+    if not keys:
+        raise RuntimeError("Debate engine: no Groq API keys configured. Set GROQ_API_KEYS or DEBATE_API_KEY.")
+
+    _CLIENT_POOL = [AsyncGroq(api_key=k) for k in keys]
+    return _CLIENT_POOL
+
+
+def _next_client(offset: int = 0):
+    global _POOL_COUNTER
+    pool = _build_client_pool()
+    client = pool[(_POOL_COUNTER + offset) % len(pool)]
+    _POOL_COUNTER += 1
+    return client
 
 
 def _debate_model() -> str:
     return provider_for_stage("debate").resolved_model or DEFAULT_DEBATE_MODEL
 
 
-async def call_groq(prompt: str, temperature: float, max_tokens: int) -> str:
-    """Single Groq chat completion; semaphore-gated, no retries (caller handles)."""
-    semaphore = _GROQ_SEMAPHORE or asyncio.Semaphore(3)
-    async with semaphore:
-        response = await _groq_client().chat.completions.create(
-            model=_debate_model(),
-            messages=[{"role": "user", "content": prompt}],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-    return (response.choices[0].message.content or "").strip()
+async def call_groq(prompt: str, temperature: float, max_tokens: int, *, use_client_b: bool = False) -> str:
+    """Single Groq chat completion; semaphore-gated with round-robin key pool and 429 retry.
+
+    Rotates through all keys in GROQ_API_KEYS on each call. On a 429, immediately
+    switches to the next key; only waits if every key in the pool has been tried.
+    """
+    import re as _re
+
+    global _GROQ_SEMAPHORE
+    if _GROQ_SEMAPHORE is None:
+        _GROQ_SEMAPHORE = asyncio.Semaphore(3)
+
+    pool = _build_client_pool()
+    pool_size = len(pool)
+    # use_client_b offsets by half the pool so A and B calls land on different keys
+    base_offset = (pool_size // 2) if use_client_b and pool_size > 1 else 0
+    max_attempts = pool_size * 2
+    delay = 5.0
+
+    for attempt in range(max_attempts):
+        client = _next_client(offset=base_offset)
+        async with _GROQ_SEMAPHORE:
+            try:
+                response = await client.chat.completions.create(
+                    model=_debate_model(),
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                return (response.choices[0].message.content or "").strip()
+            except Exception as exc:
+                msg = str(exc)
+                if "rate_limit_exceeded" not in msg and "429" not in msg:
+                    raise
+                m = _re.search(r"try again in ([0-9.]+)s", msg)
+                delay = float(m.group(1)) + 0.5 if m else delay * 2
+                if attempt == max_attempts - 1:
+                    raise
+                # Still have more keys to try — switch immediately if pool not exhausted,
+                # otherwise wait the suggested delay before the next round.
+                if attempt < pool_size - 1:
+                    continue
+        await asyncio.sleep(delay)
+
+    raise RuntimeError("call_groq: exhausted all keys and retries")
 
 
 def arguments_are_differentiated(argument_a: str, argument_b: str) -> bool:
@@ -277,10 +341,10 @@ async def run_debate(conflict: dict[str, Any], use_rebuttal: bool = True) -> dic
     claim_a = conflict["claim_a"]
     claim_b = conflict["claim_b"]
 
-    # Steps 1 and 2 are isolated from each other, so they can run concurrently.
+    # Steps 1 and 2 run concurrently; B calls use the secondary key to split TPM.
     argument_a, argument_b = await asyncio.gather(
         call_groq(_advocate_prompt("A", conflict), ADVOCATE_TEMPERATURE, ADVOCATE_MAX_TOKENS),
-        call_groq(_advocate_prompt("B", conflict), ADVOCATE_TEMPERATURE, ADVOCATE_MAX_TOKENS),
+        call_groq(_advocate_prompt("B", conflict), ADVOCATE_TEMPERATURE, ADVOCATE_MAX_TOKENS, use_client_b=True),
     )
 
     rebuttal_a = ""
@@ -289,7 +353,7 @@ async def run_debate(conflict: dict[str, Any], use_rebuttal: bool = True) -> dic
     if rebuttals_ran:
         rebuttal_a, rebuttal_b = await asyncio.gather(
             call_groq(_rebuttal_prompt("A", conflict, argument_b), ADVOCATE_TEMPERATURE, REBUTTAL_MAX_TOKENS),
-            call_groq(_rebuttal_prompt("B", conflict, argument_a), ADVOCATE_TEMPERATURE, REBUTTAL_MAX_TOKENS),
+            call_groq(_rebuttal_prompt("B", conflict, argument_a), ADVOCATE_TEMPERATURE, REBUTTAL_MAX_TOKENS, use_client_b=True),
         )
 
     judge_raw = await call_groq(

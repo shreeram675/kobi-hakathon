@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 import re
+import threading
 import time
 from typing import Any, Protocol
 
@@ -138,6 +139,50 @@ class SchemaConfig(PipelineSchemaModel):
         return None
 
 
+class _RoundRobinKeyPool:
+    """Thread-safe round-robin selector across multiple API keys.
+
+    Keys are read from EXTRACTION_API_KEYS (comma-separated), falling back to
+    EXTRACTION_API_KEY then GEMINI_API_KEY so a single-key setup is unchanged.
+    On a 429 the caller advances to the next key immediately instead of sleeping,
+    spreading TPM load across all configured keys.
+    """
+
+    def __init__(self) -> None:
+        keys = self._load_keys()
+        if not keys:
+            raise RuntimeError(
+                "Gemini extraction is not configured. "
+                "Set EXTRACTION_API_KEYS (comma-separated) or GEMINI_API_KEY."
+            )
+        self._keys = keys
+        self._index = 0
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _load_keys() -> list[str]:
+        multi = os.getenv("EXTRACTION_API_KEYS", "")
+        keys = [k.strip() for k in multi.split(",") if k.strip()]
+        if not keys:
+            provider = provider_for_stage("extraction")
+            if provider.api_key:
+                keys = [provider.api_key]
+        return keys
+
+    def current(self) -> str:
+        with self._lock:
+            return self._keys[self._index % len(self._keys)]
+
+    def advance(self) -> str:
+        """Move to next key and return it (call on 429)."""
+        with self._lock:
+            self._index = (self._index + 1) % len(self._keys)
+            return self._keys[self._index]
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+
 class ExtractionClient(Protocol):
     """Small protocol for test doubles and Gemini clients."""
 
@@ -146,13 +191,15 @@ class ExtractionClient(Protocol):
 
 
 class GeminiExtractionClient:
-    """Minimal Gemini REST client for structured extraction prompts."""
+    """Minimal Gemini REST client for structured extraction prompts.
+
+    Rotates across all keys in EXTRACTION_API_KEYS on 429s so TPM limits
+    are spread across multiple Gemini projects/accounts.
+    """
 
     def __init__(self) -> None:
+        self._key_pool = _RoundRobinKeyPool()
         provider = provider_for_stage("extraction")
-        if not provider.api_key:
-            raise RuntimeError("Gemini extraction is not configured. Set GEMINI_API_KEY.")
-        self.api_key = provider.api_key
         self.model = provider.resolved_model or "gemini-2.5-flash"
         self.models = _ordered_models(
             self.model,
@@ -176,11 +223,16 @@ class GeminiExtractionClient:
 
     def _post_with_fallbacks(self, prompt: str) -> requests.Response:
         last_error: requests.HTTPError | None = None
+        num_keys = len(self._key_pool)
         for model_index, model in enumerate(self.models):
-            for attempt in range(self.max_retries + 1):
+            # Each model gets (max_retries + 1) * num_keys attempts so every
+            # key is tried before giving up on the model.
+            total_attempts = (self.max_retries + 1) * num_keys
+            for attempt in range(total_attempts):
+                api_key = self._key_pool.current()
                 response = requests.post(
                     f"{self.api_base}/{model}:generateContent",
-                    params={"key": self.api_key},
+                    params={"key": api_key},
                     json={
                         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                         "generationConfig": {
@@ -196,12 +248,18 @@ class GeminiExtractionClient:
                     self.model = model
                     return response
 
+                if response.status_code == 429:
+                    # Rate limited — rotate to next key immediately, no sleep.
+                    self._key_pool.advance()
+                else:
+                    if attempt < total_attempts - 1:
+                        time.sleep(self.retry_sleep_seconds * ((attempt % (self.max_retries + 1)) + 1))
+
                 last_error = requests.HTTPError(
-                    f"Gemini extraction is temporarily unavailable ({response.status_code}) for model {model}.",
+                    f"Gemini extraction unavailable ({response.status_code}) "
+                    f"for model {model} (key index {attempt % num_keys}).",
                     response=response,
                 )
-                if attempt < self.max_retries:
-                    time.sleep(self.retry_sleep_seconds * (attempt + 1))
             if model_index + 1 < len(self.models):
                 time.sleep(self.retry_sleep_seconds)
 

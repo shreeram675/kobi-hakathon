@@ -106,12 +106,12 @@ STAGE_PROVIDERS: dict[str, ProviderConfig] = {
     ),
     "converse": ProviderConfig(
         "converse",
-        model="llama-3.1-70b-versatile",
+        model="llama-3.3-70b-versatile",
         api_key_env=("CONVERSE_API_KEY", "GROQ_API_KEY"),
     ),
     "debate": ProviderConfig(
         "debate",
-        model="llama3-70b-8192",
+        model="llama-3.3-70b-versatile",
         api_key_env=("DEBATE_API_KEY", "GROQ_API_KEY"),
     ),
 }

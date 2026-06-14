@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #17202a;
+  --navy: #17324d;
+  --teal: #0f7c7d;
+  --green: #16704a;
+  --amber: #a66100;
+  --red: #b83232;
+  --blue: #1f65b7;
+  --soft-green: #e8f6ef;
+  --soft-amber: #fff2d8;
+  --soft-red: #fde8e8;
+  --soft-grey: #eef2f6;
+  --paper: #f6f8fb;
+  --line: #d9e2ec;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background-color: var(--paper);
+    color: var(--ink);
+    font-feature-settings: "cv11", "ss01";
+  }
+  ::selection {
+    background: rgba(15, 124, 125, 0.18);
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-card border border-line bg-white shadow-panel;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-pill px-2.5 py-1 text-xs font-medium;
+  }
+  .stat-num {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .glass-bar {
+    background: rgba(23, 50, 77, 0.92);
+    backdrop-filter: saturate(180%) blur(10px);
+    -webkit-backdrop-filter: saturate(180%) blur(10px);
+  }
+}
+
+/* ---- thin scrollbars ---- */
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---- markdown brief ---- */
+.brief h2 {
+  @apply text-xl font-semibold text-navy mt-0 mb-3;
+}
+.brief h3 {
+  @apply text-sm font-semibold uppercase tracking-wide text-teal mt-5 mb-1.5;
+}
+.brief p {
+  @apply text-sm leading-relaxed text-ink/90 mb-3;
+}
+.brief strong {
+  @apply text-navy;
+}
+.brief em {
+  @apply text-ink/60 not-italic text-xs;
+}
+
+/* ---- reactflow theme overrides ---- */
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__edge-path {
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+.react-flow__edge.is-active .react-flow__edge-path {
+  stroke: var(--teal);
+  stroke-width: 2;
+  stroke-dasharray: 6 6;
+  animation: rf-dash 0.55s linear infinite;
+}
+.react-flow__edge.is-done .react-flow__edge-path {
+  stroke: var(--green);
+}
+@keyframes rf-dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+.react-flow__handle {
+  opacity: 0;
+}
+.react-flow__node {
+  cursor: pointer;
+}

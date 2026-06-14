@@ -76,20 +76,24 @@ def adjudicator_node(state: AgentState) -> AgentState:
     """Resolve every conflict in state into state["adjudicated"]."""
 
     run_id = state.get("run_id") or ""
-    conflicts = [item for item in state.get("conflicts") or [] if isinstance(item, dict) and "claim_a" in item]
-    if not conflicts:
-        conflicts = detect_conflicts_from_packets(
+    raw_conflicts = [item for item in state.get("conflicts") or [] if isinstance(item, dict) and "claim_a" in item]
+    if not raw_conflicts:
+        raw_conflicts = detect_conflicts_from_packets(
             state.get("normalized_packets", []),
             state.get("raw_documents", []),
         )
 
     adjudicated: list[dict[str, Any]] = []
+    conflict_records: list[dict[str, Any]] = []
     human_review_items: list[dict[str, Any]] = list(state.get("human_review_queue") or [])
     debated: list[dict[str, Any]] = []
-    for conflict in conflicts:
+    debated_record_indices: list[int] = []
+
+    for conflict in raw_conflicts:
         confidence_a = float(conflict["claim_a"].get("confidence") or 0.0)
         confidence_b = float(conflict["claim_b"].get("confidence") or 0.0)
         score_gap = abs(confidence_a - confidence_b)
+
         if score_gap > AUTO_RESOLVE_SCORE_GAP:
             winner = "A" if confidence_a >= confidence_b else "B"
             claim = conflict["claim_a"] if winner == "A" else conflict["claim_b"]
@@ -105,21 +109,48 @@ def adjudicator_node(state: AgentState) -> AgentState:
                     "reasoning": f"Score gap {score_gap:.2f} > {AUTO_RESOLVE_SCORE_GAP} auto-resolved without debate.",
                 }
             )
+            conflict_records.append({
+                "conflict_id": new_id("conflict"),
+                "run_id": run_id,
+                "field_path": conflict["field_name"],
+                "claim_ids": [],
+                "score_gap": round(score_gap, 4),
+                "resolution_status": "auto_resolved",
+                "judge_reason": f"Auto-resolved: confidence gap {score_gap:.2f} exceeded threshold.",
+            })
         else:
+            debated_record_indices.append(len(conflict_records))
             debated.append(conflict)
+            conflict_records.append({
+                "conflict_id": new_id("conflict"),
+                "run_id": run_id,
+                "field_path": conflict["field_name"],
+                "claim_ids": [],
+                "score_gap": round(score_gap, 4),
+                "resolution_status": "debate_required",
+                "judge_reason": "",
+            })
 
     if debated:
         results = asyncio.run(_run_debates(debated))
-        for conflict, result in zip(debated, results):
+        for rec_idx, conflict, result in zip(debated_record_indices, debated, results):
             entries = _entries_from_debate(conflict, result)
             adjudicated.extend(entries)
             if result.get("winner") == "FLAG":
                 human_review_items.append(_build_human_review_item(conflict, result, run_id))
+                conflict_records[rec_idx]["resolution_status"] = "manual_review_needed"
+                conflict_records[rec_idx]["judge_reason"] = result.get("reasoning") or FLAG_TEXT
+            else:
+                conflict_records[rec_idx]["judge_reason"] = result.get("reasoning") or ""
+
+    # Synthesise extracted_claims from the field_report so the UI can display them.
+    extracted_claims = _claims_from_field_report(state.get("field_report"), run_id)
 
     updated: AgentState = {
         **state,
-        "conflicts": conflicts,
+        "conflicts": conflict_records,
         "adjudicated": adjudicated,
+        "extracted_claims": extracted_claims,
         "human_review_queue": human_review_items,
         "updated_at": now_iso(),
     }
@@ -158,10 +189,11 @@ def _build_human_review_item(
 
 
 async def _run_debates(conflicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    # Reset the semaphore so it binds to the current event loop created by
-    # asyncio.run() — avoids "bound to a different event loop" on repeated runs.
+    # Reset pool so clients rebind to the event loop created by asyncio.run().
     import adjudication.debate_engine as _de
     _de._GROQ_SEMAPHORE = asyncio.Semaphore(3)
+    _de._CLIENT_POOL = None
+    _de._POOL_COUNTER = 0
     # Debates run concurrently; the semaphore caps Groq calls at 3.
     return list(await asyncio.gather(*(run_debate(conflict, use_rebuttal=True) for conflict in conflicts)))
 
@@ -354,3 +386,40 @@ def _document_authority(document: RawDocument | None) -> str:
         return DEFAULT_AUTHORITY
     source_type = str(document.metadata.get("source_type") or "").strip().lower()
     return SOURCE_TYPE_TO_AUTHORITY.get(source_type, DEFAULT_AUTHORITY)
+
+
+_FIELD_STATUS_TO_CLAIM_STATUS = {
+    "extracted": "supported",
+    "ambiguous": "conflicting",
+    "not_found": "not_found/manual_review_needed",
+    "flagged": "not_found/manual_review_needed",
+}
+
+
+def _claims_from_field_report(field_report: Any, run_id: str) -> list[dict[str, Any]]:
+    """Convert FieldReport entries into Claim-compatible dicts for the UI."""
+    if field_report is None:
+        return []
+    entries = getattr(field_report, "entries", None) or field_report.get("entries", [])
+    claims = []
+    for entry in entries:
+        fp = getattr(entry, "field_path", None) or entry.get("field_path", "")
+        val = getattr(entry, "value", None) or entry.get("value")
+        st = getattr(entry, "status", None) or entry.get("status", "not_found")
+        src_urls = getattr(entry, "source_urls", None) or entry.get("source_urls", [])
+        snippet = getattr(entry, "source_snippet", None) or entry.get("source_snippet")
+        conf = getattr(entry, "confidence", None) or entry.get("confidence") or 0.0
+        volatility = "high" if classify_volatility(fp) == "HIGH" else "low"
+        claims.append({
+            "claim_id": new_id("claim"),
+            "run_id": run_id,
+            "field_path": fp,
+            "value_json": val,
+            "status": _FIELD_STATUS_TO_CLAIM_STATUS.get(st, "null"),
+            "source_url": src_urls[0] if src_urls else None,
+            "access_date": None,
+            "quote": snippet,
+            "confidence": round(float(conf), 4),
+            "volatility": volatility,
+        })
+    return claims
