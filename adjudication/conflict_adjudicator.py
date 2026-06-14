@@ -396,19 +396,29 @@ _FIELD_STATUS_TO_CLAIM_STATUS = {
 }
 
 
+def _field_attr(entry: Any, attr: str, default: Any = None) -> Any:
+    """Get an attribute from either a Pydantic model or a plain dict safely."""
+    if isinstance(entry, dict):
+        return entry.get(attr, default)
+    return getattr(entry, attr, default)
+
+
 def _claims_from_field_report(field_report: Any, run_id: str) -> list[dict[str, Any]]:
     """Convert FieldReport entries into Claim-compatible dicts for the UI."""
     if field_report is None:
         return []
-    entries = getattr(field_report, "entries", None) or field_report.get("entries", [])
+    if isinstance(field_report, dict):
+        entries = field_report.get("entries", [])
+    else:
+        entries = getattr(field_report, "entries", []) or []
     claims = []
     for entry in entries:
-        fp = getattr(entry, "field_path", None) or entry.get("field_path", "")
-        val = getattr(entry, "value", None) or entry.get("value")
-        st = getattr(entry, "status", None) or entry.get("status", "not_found")
-        src_urls = getattr(entry, "source_urls", None) or entry.get("source_urls", [])
-        snippet = getattr(entry, "source_snippet", None) or entry.get("source_snippet")
-        conf = getattr(entry, "confidence", None) or entry.get("confidence") or 0.0
+        fp = _field_attr(entry, "field_path", "")
+        val = _field_attr(entry, "value")
+        st = _field_attr(entry, "status", "not_found")
+        src_urls = _field_attr(entry, "source_urls") or []
+        snippet = _field_attr(entry, "source_snippet")
+        conf = _field_attr(entry, "confidence") or 0.0
         volatility = "high" if classify_volatility(fp) == "HIGH" else "low"
         claims.append({
             "claim_id": new_id("claim"),

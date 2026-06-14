@@ -104,14 +104,7 @@ def narrator_node(state: AgentState) -> dict:
 
 
 def _generate_brief(field_report: FieldReport, program_name: str, brand: str | None) -> str:
-    context_block = _build_context_block(field_report)
-    brand_suffix = f" ({brand})" if brand and brand != program_name else ""
-    prompt = _NARRATION_PROMPT.format(
-        program_name=program_name,
-        brand_suffix=brand_suffix,
-        context_block=context_block,
-    )
-    return _call_gemini(prompt)
+    return _build_template_brief(field_report, program_name, brand)
 
 
 def _build_context_block(field_report: FieldReport) -> str:
@@ -140,6 +133,52 @@ def _build_context_block(field_report: FieldReport) -> str:
             parts.append(f"[{label}]\n" + "\n".join(lines))
 
     return "\n\n".join(parts) if parts else "(no extracted data)"
+
+
+def _build_template_brief(field_report: FieldReport, program_name: str, brand: str | None) -> str:
+    """Build a structured prose brief directly from extracted field data — no LLM call."""
+    by_section: dict[str, dict[str, str]] = {}
+    for entry in field_report.entries:
+        if entry.value is None or entry.status == "not_found":
+            continue
+        section = entry.field_path.split(".")[0]
+        field = entry.field_path.split(".", 1)[-1].replace("_", " ").title()
+        conf = entry.confidence or 0.0
+        flag = " *(verify)*" if entry.status in ("flagged", "ambiguous") else ""
+        by_section.setdefault(section, {})[field] = f"{entry.value}{flag}"
+
+    brand_suffix = f" ({brand})" if brand and brand != program_name else ""
+    paragraphs = [f"# {program_name}{brand_suffix} — Loyalty Intelligence Brief\n"]
+
+    section_intros = {
+        "program_basics": "**Program Overview.**",
+        "earn_mechanics": "**Earning.**",
+        "burn_mechanics": "**Redemption.**",
+        "tier_system": "**Tier Structure.**",
+        "partnerships": "**Partnerships.**",
+        "digital_experience": "**Digital Experience.**",
+        "member_sentiment": "**Member Sentiment.**",
+        "competitive_position": "**Competitive Position.**",
+    }
+
+    for section in _SECTION_ORDER:
+        fields = by_section.get(section)
+        if not fields:
+            continue
+        label = section_intros.get(section, f"**{section.replace('_',' ').title()}.**")
+        lines = [f"- {k}: {v}" for k, v in fields.items()]
+        paragraphs.append(f"{label}\n" + "\n".join(lines))
+
+    for section, fields in by_section.items():
+        if section not in _SECTION_ORDER:
+            label = f"**{section.replace('_',' ').title()}.**"
+            lines = [f"- {k}: {v}" for k, v in fields.items()]
+            paragraphs.append(f"{label}\n" + "\n".join(lines))
+
+    if len(paragraphs) == 1:
+        paragraphs.append("*No extracted data available for this program.*")
+
+    return "\n\n".join(paragraphs)
 
 
 def _call_gemini(prompt: str, max_retries: int = 2) -> str:

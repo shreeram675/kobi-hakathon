@@ -2,6 +2,7 @@
 
 Endpoints:
   POST /api/run               → start a pipeline run (background thread)
+  POST /api/run?mock=true     → skip to claims stage with pre-built mock data
   GET  /api/run               → list all run summaries
   GET  /api/run/{run_id}      → poll a single run (includes stage_status, status, conversation)
   POST /api/run/{run_id}/clarify  → submit a clarification answer for the input validator
@@ -21,6 +22,7 @@ from schemas import (
     AgentState,
     BriefOutput,
     FieldReport,
+    FieldReportEntry,
     build_initial_state,
     new_id,
     now_iso,
@@ -42,7 +44,8 @@ app = FastAPI(title="Kobie API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000",
+                   "http://localhost:3001", "http://127.0.0.1:3001"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -340,11 +343,221 @@ def run_pipeline(record: RunRecord) -> None:
             record.run_status = "done" if success else "error"
 
 
+# ── Mock field-report data ────────────────────────────────────────────────────
+_MOCK_PROFILES: dict[str, dict[str, Any]] = {
+    "delta skymiles": {
+        "program_name": "Delta SkyMiles",
+        "brand": "Delta Air Lines",
+        "fields": {
+            "program_basics.program_name": ("Delta SkyMiles", "extracted", 0.99, 4),
+            "program_basics.brand": ("Delta Air Lines", "extracted", 0.99, 4),
+            "program_basics.industry": ("Airline", "extracted", 0.98, 3),
+            "program_basics.program_type": ("Frequent Flyer", "extracted", 0.97, 3),
+            "program_basics.geography": ("Global", "extracted", 0.95, 3),
+            "program_basics.membership_count": ("Over 100 million members", "extracted", 0.82, 2),
+            "earn_mechanics.base_earn_rate": ("5 miles per $1 on Delta flights", "extracted", 0.93, 3),
+            "earn_mechanics.bonus_categories": ("First class earns 8 miles/$ ; Medallion bonus up to 11x", "extracted", 0.88, 2),
+            "earn_mechanics.non_transactional_earn": ("Miles earned via Amex credit cards, hotel stays, car rentals", "extracted", 0.85, 2),
+            "burn_mechanics.redemption_options": ("Award flights, upgrades, seat upgrades, partner hotels, gift cards", "extracted", 0.92, 3),
+            "burn_mechanics.redemption_thresholds": ("No fixed redemption chart — dynamic pricing; flights start ~5,000 miles", "ambiguous", 0.68, 2),
+            "burn_mechanics.point_value_cpp": ("~1.1–1.3 cents per mile on average", "extracted", 0.74, 2),
+            "burn_mechanics.expiry_policy": ("Miles expire after 24 months of account inactivity", "extracted", 0.91, 3),
+            "tier_system.tier_names": ("Silver Medallion, Gold Medallion, Platinum Medallion, Diamond Medallion", "extracted", 0.97, 4),
+            "tier_system.qualification_criteria": ("Medallion Qualifying Dollars (MQDs) + Medallion Qualifying Miles (MQMs) or segments", "extracted", 0.90, 3),
+            "tier_system.tier_benefits": ("Priority boarding, complimentary upgrades, lounge access (Diamond), bonus miles", "extracted", 0.88, 3),
+            "tier_system.qualification_period": ("January 1 – December 31 calendar year", "extracted", 0.95, 3),
+            "partnerships.partner_names": ("American Express, Lyft, Starbucks, Airbnb, Hertz, Hilton, Marriott", "extracted", 0.87, 3),
+            "partnerships.partnership_type": ("Credit card (Amex), hotel, rideshare, car rental, retail", "extracted", 0.85, 2),
+            "partnerships.details": ("Amex Delta cards earn 2–3x miles on Delta purchases; Starbucks earns 1 mile per $1", "extracted", 0.80, 2),
+            "digital_experience.mobile_app_available": ("Yes — Fly Delta app on iOS and Android", "extracted", 0.99, 4),
+            "digital_experience.app_ratings": ("4.8 / 5 App Store ; 4.5 / 5 Play Store", "extracted", 0.88, 3),
+            "digital_experience.personalization_features": ("Personalized upgrade offers, trip recommendations, real-time flight updates", "extracted", 0.78, 2),
+            "digital_experience.gamification_features": ("SkyMiles Shopping portal with bonus earn events; limited-time promotions", "extracted", 0.72, 2),
+            "member_sentiment.ratings": ("Generally positive — praised for upgrade availability at top tiers", "extracted", 0.76, 2),
+            "member_sentiment.common_praise": ("Strong domestic network, reliable Amex partnership, easy miles earning", "extracted", 0.80, 3),
+            "member_sentiment.common_complaints": ("Dynamic award pricing seen as unpredictable; miles devalued over time", "extracted", 0.83, 3),
+            "member_sentiment.sources_checked": ("FlyerTalk, Reddit r/delta, Trustpilot, App Store reviews", "extracted", 0.90, 3),
+            "competitive_position.key_differentiators": ("Largest domestic US network, strong Amex co-brand, high app satisfaction", "extracted", 0.85, 2),
+            "competitive_position.weaknesses": ("No fixed award chart; miles value eroded by dynamic pricing", "extracted", 0.82, 2),
+            "competitive_position.closest_competitors": ("United MileagePlus, American AAdvantage, Southwest Rapid Rewards", "extracted", 0.90, 3),
+        },
+    },
+    "marriott bonvoy": {
+        "program_name": "Marriott Bonvoy",
+        "brand": "Marriott International",
+        "fields": {
+            "program_basics.program_name": ("Marriott Bonvoy", "extracted", 0.99, 5),
+            "program_basics.brand": ("Marriott International", "extracted", 0.99, 5),
+            "program_basics.industry": ("Hotel", "extracted", 0.98, 4),
+            "program_basics.program_type": ("Hotel Loyalty", "extracted", 0.97, 4),
+            "program_basics.geography": ("Global — 140+ countries", "extracted", 0.96, 4),
+            "program_basics.membership_count": ("Over 196 million members", "extracted", 0.88, 3),
+            "earn_mechanics.base_earn_rate": ("10 points per $1 at Marriott hotels", "extracted", 0.95, 4),
+            "earn_mechanics.bonus_categories": ("Elite status earns 25–75% bonus; co-brand card earns 6x at hotels", "extracted", 0.90, 3),
+            "earn_mechanics.non_transactional_earn": ("Points via Chase/Amex Bonvoy cards, dining, car rentals, retail partners", "extracted", 0.84, 3),
+            "burn_mechanics.redemption_options": ("Free nights, room upgrades, airline miles transfer (39 partners), experiences", "extracted", 0.93, 4),
+            "burn_mechanics.redemption_thresholds": ("Category 1 hotels from 7,500 pts/night; Category 8 up to 100,000 pts/night", "extracted", 0.89, 3),
+            "burn_mechanics.point_value_cpp": ("~0.7–0.9 cents per point", "extracted", 0.77, 2),
+            "burn_mechanics.expiry_policy": ("Points expire after 24 months of inactivity", "extracted", 0.92, 3),
+            "tier_system.tier_names": ("Member, Silver Elite, Gold Elite, Platinum Elite, Titanium Elite, Ambassador Elite", "extracted", 0.97, 5),
+            "tier_system.qualification_criteria": ("Nights stayed per calendar year: Silver 10, Gold 25, Platinum 50, Titanium 75, Ambassador 100", "extracted", 0.95, 4),
+            "tier_system.tier_benefits": ("Room upgrades, lounge access (Platinum+), Welcome Gift, late checkout, dedicated Ambassador service", "extracted", 0.90, 4),
+            "tier_system.qualification_period": ("January 1 – December 31", "extracted", 0.97, 4),
+            "partnerships.partner_names": ("Chase, American Express, United, Delta, Air Canada, Hertz, Uber", "extracted", 0.88, 3),
+            "partnerships.partnership_type": ("Credit card, airline transfer, car rental, rideshare", "extracted", 0.86, 3),
+            "partnerships.details": ("Transfer to 39 airlines at 3:1 ratio with 5,000-pt bonus on 60,000+ transfer", "extracted", 0.82, 3),
+            "digital_experience.mobile_app_available": ("Yes — Marriott Bonvoy app on iOS and Android", "extracted", 0.99, 5),
+            "digital_experience.app_ratings": ("4.8 / 5 App Store ; 4.2 / 5 Play Store", "extracted", 0.85, 3),
+            "digital_experience.personalization_features": ("Mobile check-in/out, digital key, room preference selection", "extracted", 0.85, 3),
+            "digital_experience.gamification_features": ("Marriott Bonvoy Moments (experiences auction), limited earning promotions", "extracted", 0.74, 2),
+            "member_sentiment.ratings": ("Mixed — elites satisfied, general members critical of award inflation", "ambiguous", 0.70, 2),
+            "member_sentiment.common_praise": ("Vast property portfolio, airline transfer flexibility, strong elite benefits", "extracted", 0.82, 3),
+            "member_sentiment.common_complaints": ("Point devaluation after merger, inconsistent elite recognition at properties", "extracted", 0.85, 3),
+            "member_sentiment.sources_checked": ("FlyerTalk, Reddit r/marriott, Trustpilot, App Store", "extracted", 0.90, 3),
+            "competitive_position.key_differentiators": ("Largest hotel portfolio globally, airline transfer to 39 carriers", "extracted", 0.88, 3),
+            "competitive_position.weaknesses": ("Post-merger inconsistency; ~0.7 cpp point value trails Hyatt World of Hyatt", "extracted", 0.80, 2),
+            "competitive_position.closest_competitors": ("Hilton Honors, World of Hyatt, IHG One Rewards", "extracted", 0.91, 4),
+        },
+    },
+    "hilton honors": {
+        "program_name": "Hilton Honors",
+        "brand": "Hilton Worldwide",
+        "fields": {
+            "program_basics.program_name": ("Hilton Honors", "extracted", 0.99, 5),
+            "program_basics.brand": ("Hilton Worldwide", "extracted", 0.99, 4),
+            "program_basics.industry": ("Hotel", "extracted", 0.98, 4),
+            "program_basics.program_type": ("Hotel Loyalty", "extracted", 0.97, 4),
+            "program_basics.geography": ("Global — 122+ countries", "extracted", 0.95, 4),
+            "program_basics.membership_count": ("Over 180 million members", "extracted", 0.86, 3),
+            "earn_mechanics.base_earn_rate": ("10 points per $1 at Hilton hotels", "extracted", 0.95, 4),
+            "earn_mechanics.bonus_categories": ("Elite bonus 25–100%; Amex Hilton Surpass earns 12x at Hilton", "extracted", 0.88, 3),
+            "earn_mechanics.non_transactional_earn": ("Amex co-brand cards, dining via Hilton Honors Dining, partner earn", "extracted", 0.82, 3),
+            "burn_mechanics.redemption_options": ("Free nights (Points & Money available), room upgrades, Amazon, charity", "extracted", 0.90, 3),
+            "burn_mechanics.redemption_thresholds": ("Standard rewards start ~5,000 pts; premium properties up to 150,000 pts/night", "extracted", 0.85, 3),
+            "burn_mechanics.point_value_cpp": ("~0.5–0.6 cents per point — lower than Marriott", "extracted", 0.75, 2),
+            "burn_mechanics.expiry_policy": ("Points expire after 12 months of inactivity", "extracted", 0.91, 3),
+            "tier_system.tier_names": ("Member, Silver, Gold, Diamond", "extracted", 0.97, 5),
+            "tier_system.qualification_criteria": ("Nights: Silver 10, Gold 40, Diamond 60 per year", "extracted", 0.94, 4),
+            "tier_system.tier_benefits": ("Executive Lounge (Diamond), complimentary breakfast (Diamond), room upgrades, 100% bonus points", "extracted", 0.89, 4),
+            "tier_system.qualification_period": ("January 1 – December 31", "extracted", 0.97, 4),
+            "partnerships.partner_names": ("American Express, Amazon, Lyft, CarRentals.com, Ticketmaster", "extracted", 0.85, 3),
+            "partnerships.partnership_type": ("Credit card, retail, rideshare, car rental, entertainment", "extracted", 0.83, 2),
+            "partnerships.details": ("Amex Hilton cards offer 7–14x at Hilton; Amazon earn via Hilton portal; no airline transfer", "extracted", 0.80, 2),
+            "digital_experience.mobile_app_available": ("Yes — Hilton Honors app on iOS and Android", "extracted", 0.99, 5),
+            "digital_experience.app_ratings": ("4.8 / 5 App Store ; 4.6 / 5 Play Store", "extracted", 0.88, 3),
+            "digital_experience.personalization_features": ("Digital key, room selection, mobile check-in/out, Connected Room (IoT control)", "extracted", 0.87, 3),
+            "digital_experience.gamification_features": ("Hilton Honors Challenges, bonus point promotions, seasonal offers", "extracted", 0.76, 2),
+            "member_sentiment.ratings": ("Positive — Diamond members highly satisfied with breakfast and lounge benefits", "extracted", 0.79, 3),
+            "member_sentiment.common_praise": ("Consistent complimentary breakfast for Diamond, strong app experience, broad portfolio", "extracted", 0.83, 3),
+            "member_sentiment.common_complaints": ("Lower point value vs competitors; no airline transfer partners", "extracted", 0.81, 3),
+            "member_sentiment.sources_checked": ("FlyerTalk, Reddit r/hilton, Trustpilot, App Store", "extracted", 0.90, 3),
+            "competitive_position.key_differentiators": ("Complimentary Diamond breakfast globally, strong Connected Room tech, Amex partnership", "extracted", 0.86, 3),
+            "competitive_position.weaknesses": ("No airline miles transfer; ~0.5 cpp among lowest in hotel space", "extracted", 0.82, 2),
+            "competitive_position.closest_competitors": ("Marriott Bonvoy, World of Hyatt, IHG One Rewards", "extracted", 0.91, 4),
+        },
+    },
+}
+
+
+def _fuzzy_match_profile(user_input: str) -> str | None:
+    """Match user input to a known mock profile key."""
+    needle = user_input.lower().strip()
+    for key in _MOCK_PROFILES:
+        if key in needle or any(word in needle for word in key.split()):
+            return key
+    return None
+
+
+def _build_mock_field_report(profile_key: str) -> FieldReport:
+    profile = _MOCK_PROFILES[profile_key]
+    entries: list[FieldReportEntry] = []
+    extracted = ambiguous = not_found = 0
+    for field_path, (value, status, confidence, corroboration) in profile["fields"].items():
+        category = field_path.split(".")[0]
+        entry = FieldReportEntry(
+            field_path=field_path,
+            category=category,
+            status=status,
+            value=value,
+            confidence=confidence,
+            corroboration_count=corroboration,
+            source_urls=[f"https://mock-source.example/{profile_key.replace(' ', '-')}/{field_path}"],
+            source_snippet=f"Mock source for {field_path}: {value}",
+        )
+        entries.append(entry)
+        if status == "extracted":
+            extracted += 1
+        elif status == "ambiguous":
+            ambiguous += 1
+        else:
+            not_found += 1
+
+    return FieldReport(
+        entity_name=profile["program_name"],
+        entries=entries,
+        extracted_count=extracted,
+        ambiguous_count=ambiguous,
+        not_found_count=not_found,
+        flagged_count=0,
+    )
+
+
+def _run_mock_pipeline(record: RunRecord) -> None:
+    """Skip retrieval/extraction; inject mock field_report and run from claims onward."""
+    program_key = _fuzzy_match_profile(record.user_input)
+    if program_key is None:
+        # Fall back to Delta SkyMiles as default
+        program_key = "delta skymiles"
+
+    profile = _MOCK_PROFILES[program_key]
+
+    # Mark all pre-claims stages as done instantly
+    for stage in ["input_validator", "query_generator", "retrieval", "firecrawl_scraper", "chunking", "extraction"]:
+        _mark(record, stage, "done")
+
+    _mark(record, "claims", "running")
+    field_report = _build_mock_field_report(program_key)
+    _apply(record, {
+        "program_name": profile["program_name"],
+        "brand": profile["brand"],
+        "field_report": field_report,
+        "conflicts": [],
+        "adjudicated": [],
+    })
+    _mark(record, "claims", "done")
+
+    state = record.state
+
+    # Adjudication
+    _mark(record, "adjudication", "running")
+    try:
+        delta = adjudication_node(state)
+        state = _apply(record, delta)
+        _mark(record, "adjudication", "done")
+    except Exception as exc:
+        _apply(record, {"errors": [*state.get("errors", []), {"stage": "adjudication", "message": str(exc)}]})
+        _mark(record, "adjudication", "error")
+
+    # Narration → output
+    _mark(record, "output", "running")
+    try:
+        delta = narrator_node(state)
+        state = _apply(record, delta)
+        _mark(record, "output", "done")
+    except Exception as exc:
+        _apply(record, {"errors": [*state.get("errors", []), {"stage": "output", "message": str(exc)}]})
+        _mark(record, "output", "error")
+
+    with record.lock:
+        record.run_status = "done"
+
+
 # ── Request / response models ─────────────────────────────────────────────────
 class CreateRunBody(_PydanticBase):
     user_input: str
     mode: str = "single"
     user_input_b: str | None = None
+    mock: bool = True  # default to mock to avoid expensive API calls
 
 
 class ConverseRequest(_PydanticBase):
@@ -368,7 +581,8 @@ def create_run(body: CreateRunBody) -> dict[str, str]:
     with STORE_LOCK:
         STORE[run_id] = record
 
-    threading.Thread(target=run_pipeline, args=(record,), daemon=True).start()
+    target = _run_mock_pipeline if body.mock else run_pipeline
+    threading.Thread(target=target, args=(record,), daemon=True).start()
     return {"run_id": run_id}
 
 
