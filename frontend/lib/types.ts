@@ -309,6 +309,36 @@ export interface ComparisonOutput {
   items: ComparisonItem[];
 }
 
+export interface CategoryVerdict {
+  category: string;
+  label: string;
+  winner: string;
+  insight: string;
+}
+
+export interface KeyDifferentiator {
+  topic: string;
+  insight: string;
+  advantage: string;
+}
+
+export interface ProgramPersona {
+  program: string;
+  best_for: string;
+}
+
+export interface ComparisonBrief {
+  brief_id: string;
+  run_id: string;
+  programs: string[];
+  overall_winner: string | null;
+  executive_summary: string;
+  category_verdicts: CategoryVerdict[];
+  key_differentiators: KeyDifferentiator[];
+  personas: ProgramPersona[];
+  generated_at: string;
+}
+
 export interface ConverseAnswer {
   answer: string;
   status: ClaimStatus;
@@ -377,6 +407,7 @@ export interface AgentState {
 
   final_brief: BriefOutput | null;
   comparison_output: ComparisonOutput | null;
+  comparison_brief: ComparisonBrief | null;
   conversation_answer: ConverseAnswer | null;
 
   errors: PipelineError[];

@@ -387,6 +387,36 @@ class ComparisonOutput(KobieModel):
     items: list[ComparisonItem] = Field(default_factory=list)
 
 
+class CategoryVerdict(KobieModel):
+    category: str
+    label: str
+    winner: str  # program name or "Tie" or "Insufficient data"
+    insight: str
+
+
+class KeyDifferentiator(KobieModel):
+    topic: str
+    insight: str
+    advantage: str  # program name that wins here
+
+
+class ProgramPersona(KobieModel):
+    program: str
+    best_for: str
+
+
+class ComparisonBrief(KobieModel):
+    brief_id: str = Field(default_factory=lambda: new_id("compbrief"))
+    run_id: str
+    programs: list[str]
+    overall_winner: str | None = None
+    executive_summary: str
+    category_verdicts: list[CategoryVerdict] = Field(default_factory=list)
+    key_differentiators: list[KeyDifferentiator] = Field(default_factory=list)
+    personas: list[ProgramPersona] = Field(default_factory=list)
+    generated_at: str = Field(default_factory=now_iso)
+
+
 class ConverseAnswer(KobieModel):
     answer: str
     status: ClaimStatus
@@ -438,6 +468,7 @@ class AgentState(TypedDict):
     data_quality: float
     final_brief: BriefOutput | None
     comparison_output: ComparisonOutput | None
+    comparison_brief: ComparisonBrief | None
     conversation_answer: ConverseAnswer | None
     errors: list[PipelineError]
     created_at: str
@@ -483,6 +514,7 @@ def build_initial_state(user_input: str, mode: RunMode = RunMode.SINGLE) -> Agen
         "data_quality": 0.0,
         "final_brief": None,
         "comparison_output": None,
+        "comparison_brief": None,
         "conversation_answer": None,
         "errors": [],
         "created_at": timestamp,

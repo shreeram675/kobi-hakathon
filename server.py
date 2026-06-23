@@ -11,8 +11,15 @@ Endpoints:
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from typing import Any
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("kobie")
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,7 +45,7 @@ from graph import (
     adjudication_node,
     narrator_node,
 )
-from comparison import compare_claim_sets
+from comparison_brief import generate_comparison_brief
 from converse import answer_question
 import cost_tracker
 
@@ -199,6 +206,7 @@ def _run_single_pipeline(record: RunRecord) -> bool:
             delta = input_validator_node(state)
             state = _apply(record, delta)
         except Exception:
+            logger.exception("[%s] input_validator crashed", record.run_id)
             _mark(record, "input_validator", "error")
             return False
 
@@ -235,6 +243,7 @@ def _run_single_pipeline(record: RunRecord) -> bool:
             _mark(record, "query_generator", "error")
             return False
     except Exception:
+        logger.exception("[%s] query_generator crashed", record.run_id)
         _mark(record, "query_generator", "error")
         return False
 
@@ -251,6 +260,7 @@ def _run_single_pipeline(record: RunRecord) -> bool:
             _mark(record, "retrieval", "error")
             return False
     except Exception:
+        logger.exception("[%s] retrieval crashed", record.run_id)
         _mark(record, "retrieval", "error")
         return False
 
@@ -280,6 +290,7 @@ def _run_single_pipeline(record: RunRecord) -> bool:
             _mark(record, "firecrawl_scraper", "error")
             return False
     except Exception:
+        logger.exception("[%s] firecrawl_scraper crashed", record.run_id)
         _mark(record, "firecrawl_scraper", "error")
         return False
 
@@ -315,6 +326,7 @@ def _run_single_pipeline(record: RunRecord) -> bool:
             _mark(record, "claims", "error")
             return False
     except Exception:
+        logger.exception("[%s] ingest/chunking crashed", record.run_id)
         _mark(record, "chunking", "error")
         _mark(record, "extraction", "error")
         _mark(record, "claims", "error")
@@ -329,6 +341,7 @@ def _run_single_pipeline(record: RunRecord) -> bool:
         state = _apply(record, delta)
         _mark(record, "adjudication", "done")
     except Exception:
+        logger.exception("[%s] adjudication crashed", record.run_id)
         _mark(record, "adjudication", "error")
         return False
 
@@ -345,6 +358,7 @@ def _run_single_pipeline(record: RunRecord) -> bool:
             _mark(record, "output", "error")
             return False
     except Exception:
+        logger.exception("[%s] output/narrator crashed", record.run_id)
         _mark(record, "output", "error")
         return False
 
@@ -385,6 +399,7 @@ def run_pipeline(record: RunRecord) -> None:
     if record.mode == "compare" and len(record.programs) >= 2:
         all_claims: list[list] = [[] for _ in record.programs]
         all_names: list[str] = list(record.programs)
+        all_field_reports: list[Any] = [None] * len(record.programs)
         any_success = False
 
         for i, prog in enumerate(record.programs):
@@ -398,33 +413,37 @@ def run_pipeline(record: RunRecord) -> None:
             _reset_record_for_program(record, prog, i)
             cost_tracker.set_active_run_id(record.run_id)
             success = _run_single_pipeline(record)
+            with record.lock:
+                all_field_reports[i] = record.state.get("field_report")
             _save_program_result(record, i, success, all_claims, all_names)
             if success:
                 any_success = True
 
-        # Generate comparison output for the first two completed programs
         done_indices = [i for i, s in enumerate(record.program_statuses) if s == "done"]
         if len(done_indices) >= 2:
-            try:
-                comparison = compare_claim_sets(
-                    record.run_id,
-                    all_names[done_indices[0]],
-                    all_names[done_indices[1]],
-                    all_claims[done_indices[0]],
-                    all_claims[done_indices[1]],
-                )
-                with record.lock:
-                    record.state = {**record.state, "comparison_output": comparison}
-            except Exception:
-                pass
             with record.lock:
                 record.compare_b = record.program_states[done_indices[1]]
-                # Restore main state to program A so the API response correctly
-                # represents program A (record.state was last set to program B's state).
-                comparison_output = record.state.get("comparison_output")
                 state_a = record.program_states[done_indices[0]]
                 if state_a is not None:
-                    record.state = {**state_a, "comparison_output": comparison_output}
+                    record.state = dict(state_a)
+
+            # Generate LLM comparison brief from all completed field reports
+            try:
+                from schemas import FieldReport as _FieldReport
+                brief_names = [all_names[i] for i in done_indices]
+                brief_reports = []
+                for i in done_indices:
+                    fr = all_field_reports[i]
+                    if isinstance(fr, _FieldReport):
+                        brief_reports.append(fr)
+                    elif isinstance(fr, dict):
+                        brief_reports.append(_FieldReport.model_validate(fr))
+                if len(brief_reports) >= 2:
+                    brief = generate_comparison_brief(record.run_id, brief_names, brief_reports)
+                    with record.lock:
+                        record.state = {**record.state, "comparison_brief": brief}
+            except Exception:
+                logger.exception("[%s] comparison brief generation failed", record.run_id)
 
         with record.lock:
             # Mark any stage still showing "running" as failed
@@ -942,34 +961,41 @@ def _run_mock_pipeline(record: RunRecord) -> None:
     if record.mode == "compare" and len(record.programs) >= 2:
         all_claims: list[list] = [[] for _ in record.programs]
         all_names: list[str] = list(record.programs)
+        all_field_reports_mock: list[Any] = [None] * len(record.programs)
 
         for i, prog in enumerate(record.programs):
             if _stopped(record):
                 break
             _reset_record_for_program(record, prog, i)
             _run_mock_single(record, prog)
+            with record.lock:
+                all_field_reports_mock[i] = record.state.get("field_report")
             _save_program_result(record, i, True, all_claims, all_names)
 
         done_indices = [i for i, s in enumerate(record.program_statuses) if s == "done"]
         if len(done_indices) >= 2:
-            try:
-                comparison = compare_claim_sets(
-                    record.run_id,
-                    all_names[done_indices[0]],
-                    all_names[done_indices[1]],
-                    all_claims[done_indices[0]],
-                    all_claims[done_indices[1]],
-                )
-                with record.lock:
-                    record.state = {**record.state, "comparison_output": comparison}
-            except Exception:
-                pass
             with record.lock:
                 record.compare_b = record.program_states[done_indices[1]]
-                comparison_output = record.state.get("comparison_output")
                 state_a = record.program_states[done_indices[0]]
                 if state_a is not None:
-                    record.state = {**state_a, "comparison_output": comparison_output}
+                    record.state = dict(state_a)
+
+            try:
+                from schemas import FieldReport as _FieldReport
+                brief_names = [all_names[i] for i in done_indices]
+                brief_reports = []
+                for i in done_indices:
+                    fr = all_field_reports_mock[i]
+                    if isinstance(fr, _FieldReport):
+                        brief_reports.append(fr)
+                    elif isinstance(fr, dict):
+                        brief_reports.append(_FieldReport.model_validate(fr))
+                if len(brief_reports) >= 2:
+                    brief = generate_comparison_brief(record.run_id, brief_names, brief_reports)
+                    with record.lock:
+                        record.state = {**record.state, "comparison_brief": brief}
+            except Exception:
+                logger.exception("[%s] mock comparison brief generation failed", record.run_id)
 
         with record.lock:
             record.run_status = "done"

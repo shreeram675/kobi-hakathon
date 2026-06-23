@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 import requests
@@ -202,16 +203,19 @@ def _build_template_brief(field_report: FieldReport, program_name: str, brand: s
 
 def _call_gemini(prompt: str, max_retries: int = 2) -> str:
     provider = provider_for_stage("narration")
-    api_key = provider.api_key
-    if not api_key:
-        raise RuntimeError("Narration is not configured. Set NARRATION_API_KEY or GEMINI_API_KEY.")
+    raw = os.getenv("NARRATION_API_KEYS", "")
+    keys = [k.strip() for k in raw.split(",") if k.strip()] or ([provider.api_key] if provider.api_key else [])
+    if not keys:
+        raise RuntimeError("Narration is not configured. Set NARRATION_API_KEYS or NARRATION_API_KEY or GEMINI_API_KEY.")
 
     api_base = (provider.api_base or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
     model = provider.resolved_model or "gemini-2.5-flash"
     url = f"{api_base}/models/{model}:generateContent"
 
     last_error: Exception | None = None
-    for attempt in range(max_retries + 1):
+    key_idx = 0
+    for attempt in range((max_retries + 1) * len(keys)):
+        api_key = keys[key_idx % len(keys)]
         response = requests.post(
             url,
             headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
@@ -242,7 +246,9 @@ def _call_gemini(prompt: str, max_retries: int = 2) -> str:
             f"Narration LLM returned {response.status_code}",
             response=response,
         )
-        if attempt < max_retries:
-            time.sleep(2**attempt)
+        if response.status_code == 429:
+            key_idx += 1
+        else:
+            time.sleep(2 ** min(attempt, 4))
 
     raise last_error or RuntimeError("Narration LLM request failed.")
