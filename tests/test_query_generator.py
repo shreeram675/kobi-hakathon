@@ -114,7 +114,7 @@ def test_local_query_fallback_keeps_queries_concise():
 def test_query_generator_prompt_contains_strict_query_laws():
     assert "If the input domain is provided, it overrides" in QUERY_GENERATOR_SYSTEM_PROMPT
     assert "Maximum: 10 words" in QUERY_GENERATOR_SYSTEM_PROMPT
-    assert "site:reddit.com" in QUERY_GENERATOR_SYSTEM_PROMPT
+    assert "reddit.com" in QUERY_GENERATOR_SYSTEM_PROMPT  # blocked domain must be listed
     assert "field_query_map" in QUERY_GENERATOR_SYSTEM_PROMPT
     assert '"queries": [' in QUERY_GENERATOR_SYSTEM_PROMPT
 

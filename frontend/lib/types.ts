@@ -421,8 +421,10 @@ export interface AgentState {
   active_stage: string | null;
   /** Coarse lifecycle of the whole run. */
   status: "running" | "done" | "error" | "clarification_needed" | "cancelled";
-  /** Conversation history for converse mode. */
+  /** Conversation history for single/converse mode (grounded in that run's data). */
   conversation?: ConverseTurn[];
+  /** Conversation history for comparison runs (grounded in comparison brief + all program data). */
+  comparison_conversation?: ConverseTurn[];
   /** compare mode: the second program's full state (UI-only convenience). */
   compare_b?: AgentState | null;
   /** compare mode: full multi-program queue info (available for all comparison runs). */

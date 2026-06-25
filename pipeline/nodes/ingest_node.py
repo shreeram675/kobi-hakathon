@@ -146,4 +146,7 @@ def _build_extraction_context(state: AgentState) -> dict[str, Any]:
         value = state.get(key)
         if value is not None:
             ctx[key] = value
+    result = state.get("query_generation_result")
+    if result and result.priority_fields:
+        ctx["priority_fields"] = result.priority_fields
     return ctx

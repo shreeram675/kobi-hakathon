@@ -586,6 +586,16 @@ def _build_extraction_context_preamble(context: dict) -> str:
             "- Do NOT extrapolate or infer what the current value might be from an old source.",
         ]
 
+    priority_fields: list[str] = context.get("priority_fields") or []
+    if priority_fields:
+        lines += [
+            "",
+            "PROGRAM PRIORITY FIELDS (ranked by schema importance for this program type):",
+            ", ".join(priority_fields),
+            "Allocate extra attention to extracting these fields. Mark a priority field as NOT_FOUND"
+            " only after exhausting all evidence in the chunk.",
+        ]
+
     if not lines:
         return ""
     return "\n".join(lines) + "\n\n"

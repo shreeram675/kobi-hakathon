@@ -329,7 +329,7 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
               focusedStage={focused}
             />
 
-            {state.mode === "converse" && (
+            {(state.mode === "single" || state.mode === "converse") && (
               <section id="converse" className="scroll-mt-4">
                 <h2 className="mb-2.5 flex items-center gap-2 text-[13px] font-semibold text-navy">
                   Follow-up conversation

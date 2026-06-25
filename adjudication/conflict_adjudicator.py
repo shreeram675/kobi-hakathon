@@ -217,11 +217,28 @@ def _build_human_review_item(
 async def _run_debates(conflicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # Reset pool so clients rebind to the event loop created by asyncio.run().
     import adjudication.debate_engine as _de
-    _de._GROQ_SEMAPHORE = asyncio.Semaphore(3)
+    _de._GROQ_SEMAPHORE = asyncio.Semaphore(5)
     _de._CLIENT_POOL = None
     _de._POOL_COUNTER = 0
-    # Debates run concurrently; the semaphore caps Groq calls at 3.
-    return list(await asyncio.gather(*(run_debate(conflict, use_rebuttal=True) for conflict in conflicts)))
+
+    async def _safe_debate(conflict: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await run_debate(conflict, use_rebuttal=True)
+        except Exception as exc:
+            return {
+                "field_name": conflict.get("field_name", ""),
+                "winner": "FLAG",
+                "winning_value": None,
+                "deciding_factor": "unresolvable",
+                "reasoning": f"Debate engine error: {exc}",
+                "rebuttal_assessment": {"A_rebuttal": "weak", "B_rebuttal": "weak"},
+                "hallucination_detected": {"argument_a": False, "argument_b": False, "rebuttal_a": False, "rebuttal_b": False},
+                "argument_a": "", "argument_b": "", "rebuttal_a": "", "rebuttal_b": "",
+                "final_confidence": FLAG_CONFIDENCE,
+                "steps_used": 0,
+            }
+
+    return list(await asyncio.gather(*(_safe_debate(c) for c in conflicts)))
 
 
 def _rounds_from_result(result: dict[str, Any]) -> list[dict[str, Any]]:

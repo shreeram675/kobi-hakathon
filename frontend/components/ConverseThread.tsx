@@ -5,28 +5,45 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/textarea";
 import { StatusBadge } from "./badges";
-import { useConverse } from "@/lib/hooks";
+import { useCompareConverse, useConverse } from "@/lib/hooks";
 import { cn } from "@/lib/format";
 import type { ConverseTurn } from "@/lib/types";
 
-const SUGGESTIONS = [
+const SINGLE_SUGGESTIONS = [
   "What is the base earn rate?",
   "List the elite tiers",
   "Who are the closest competitors?",
 ];
 
-/** Chat bubbles + composer for converse mode (grounded follow-up Q&A). */
+const COMPARE_SUGGESTIONS = [
+  "Which program has better earn rates?",
+  "Compare the tier systems",
+  "Which is best for frequent travelers?",
+];
+
+/** Chat bubbles + composer for grounded follow-up Q&A (single or comparison runs). */
 export function ConverseThread({
   runId,
   conversation,
   disabled,
+  compare = false,
+  suggestions,
+  placeholder,
 }: {
   runId: string;
   conversation: ConverseTurn[];
   disabled?: boolean;
+  /** When true, sends messages to the comparison-specific endpoint. */
+  compare?: boolean;
+  suggestions?: string[];
+  placeholder?: string;
 }) {
   const [message, setMessage] = useState("");
-  const converse = useConverse(runId);
+  const singleConverse = useConverse(runId);
+  const compareConverse = useCompareConverse(runId);
+  const converse = compare ? compareConverse : singleConverse;
+  const effectiveSuggestions = suggestions ?? (compare ? COMPARE_SUGGESTIONS : SINGLE_SUGGESTIONS);
+  const effectivePlaceholder = placeholder ?? (compare ? "Ask about the comparison…" : "Ask about this program…");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -69,7 +86,7 @@ export function ConverseThread({
 
       {!disabled && conversation.length <= 1 && (
         <div className="flex flex-wrap gap-1.5 px-4 pb-2">
-          {SUGGESTIONS.map((s) => (
+          {effectiveSuggestions.map((s) => (
             <button
               key={s}
               onClick={() => send(s)}
@@ -91,7 +108,7 @@ export function ConverseThread({
         <Input
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          placeholder={disabled ? "Run still processing…" : "Ask about this program…"}
+          placeholder={disabled ? "Run still processing…" : effectivePlaceholder}
           disabled={disabled || converse.isPending}
         />
         <Button type="submit" size="md" disabled={disabled || !message.trim()}>

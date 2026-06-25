@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { ComparisonTable } from "@/components/ComparisonTable";
 import { DataQualityGauge } from "@/components/charts/DataQualityGauge";
 import { useRun } from "@/lib/hooks";
+import { ConverseThread } from "@/components/ConverseThread";
 import { cn, pct, signed, renderValue } from "@/lib/format";
 import {
   CATEGORY_ORDER,
@@ -165,6 +166,24 @@ function TwoProgramView({ runId, state }: { runId: string; state: AgentState }) 
         </div>
       )}
 
+      {/* Comparison chat — grounded strictly in the comparison brief and per-program field data */}
+      <section id="compare-converse" className="scroll-mt-4">
+        <h2 className="mb-2.5 flex items-center gap-2 text-[13px] font-semibold text-navy">
+          Ask about this comparison
+          <span className="text-[11px] font-normal text-ink/40">
+            grounded strictly in {programA} vs {programB} extracted data
+          </span>
+        </h2>
+        <div className="rounded-[10px] border border-line bg-white shadow-sm">
+          <ConverseThread
+            runId={runId}
+            conversation={state.comparison_conversation ?? []}
+            disabled={!brief}
+            compare={true}
+          />
+        </div>
+      </section>
+
       <h2 className="text-base font-semibold text-navy">Field-by-field data</h2>
       <ComparisonTable comparison={syntheticComparison} stateA={state} stateB={stateB} />
     </div>
@@ -225,7 +244,7 @@ function ComparisonBriefPanel({ brief }: { brief: ComparisonBrief }) {
                     )}
                     <span className={cn("truncate text-sm font-semibold", color)}>{v.winner}</span>
                   </div>
-                  <p className="mt-1.5 text-[11px] leading-snug text-ink/55 line-clamp-3">{v.insight}</p>
+                  <p className="mt-1.5 text-[11px] leading-snug text-ink/55">{v.insight}</p>
                 </div>
               );
             })}
@@ -377,6 +396,24 @@ function MultiProgramView({
           </div>
         </div>
       </div>
+
+      {/* Comparison chat */}
+      <section id="compare-converse" className="scroll-mt-4">
+        <h2 className="mb-2.5 flex items-center gap-2 text-[13px] font-semibold text-navy">
+          Ask about this comparison
+          <span className="text-[11px] font-normal text-ink/40">
+            grounded strictly in the {nCompleted} programs&#39; extracted data
+          </span>
+        </h2>
+        <div className="rounded-[10px] border border-line bg-white shadow-sm">
+          <ConverseThread
+            runId={runId}
+            conversation={state.comparison_conversation ?? []}
+            disabled={false}
+            compare={true}
+          />
+        </div>
+      </section>
     </div>
   );
 }

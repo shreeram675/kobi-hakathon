@@ -244,7 +244,7 @@ async def call_groq(prompt: str, temperature: float, max_tokens: int, *, use_cli
 
     global _GROQ_SEMAPHORE
     if _GROQ_SEMAPHORE is None:
-        _GROQ_SEMAPHORE = asyncio.Semaphore(3)
+        _GROQ_SEMAPHORE = asyncio.Semaphore(5)
 
     pool = _build_client_pool()
     pool_size = len(pool)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import cost_tracker
 from providers import provider_for_stage
-from schemas import BriefOutput, ClaimStatus, ConverseAnswer, FieldReport
+from schemas import BriefOutput, ClaimStatus, ComparisonBrief, ConverseAnswer, FieldReport
 
 
 _CONVERSE_PROMPT = """\
@@ -13,7 +13,7 @@ You are a loyalty-program research assistant. You answer questions ONLY from the
 RULES:
 - Answer in 1-3 short paragraphs.
 - When citing a specific fact, note the field name in parentheses, e.g. (earn_mechanics.base_earn_rate).
-- If the answer cannot be found in the data below, reply exactly: "I don't have that information in the current brief."
+- If the answer cannot be found in the data below, reply exactly: "The requested information is not available in the extracted results."
 - If a value is flagged as needing verification, mention the caveat clearly.
 - Do not speculate or infer beyond what is stated.
 
@@ -25,6 +25,60 @@ FIELD DATA (structured):
 
 QUESTION: {question}\
 """
+
+_COMPARE_CONVERSE_PROMPT = """\
+You are a senior loyalty program analyst assistant. You answer questions ONLY from the COMPARISON BRIEF and PROGRAM DATA provided below. Never use external knowledge, assumptions, or model-generated facts beyond what is explicitly stated in the data.
+
+RULES:
+- Answer in 1-3 short paragraphs.
+- When citing a specific fact, note the program name and field in parentheses, e.g. (Delta SkyMiles — earn_mechanics.base_earn_rate).
+- If the answer cannot be found in the data below, reply exactly: "The requested information is not available in the extracted results."
+- If a value is flagged as needing verification, mention the caveat clearly.
+- Do not speculate, infer, or introduce any external knowledge.
+- Keep all responses strictly grounded in the comparison data provided.
+
+COMPARISON BRIEF:
+{brief_text}
+
+PER-PROGRAM FIELD DATA:
+{field_data}
+
+QUESTION: {question}\
+"""
+
+
+def answer_comparison_question(
+    question: str,
+    comparison_brief: ComparisonBrief,
+    program_reports: list[tuple[str, FieldReport | None]],
+) -> ConverseAnswer:
+    """Answer a comparison question grounded strictly in the comparison brief and field reports."""
+    brief_text = _build_comparison_brief_text(comparison_brief)
+    field_data = _build_multi_field_data(program_reports)
+    prompt = _COMPARE_CONVERSE_PROMPT.format(
+        brief_text=brief_text,
+        field_data=field_data,
+        question=question,
+    )
+
+    try:
+        answer_text = _call_groq(prompt)
+    except Exception as exc:
+        return ConverseAnswer(
+            answer=f"Error: {exc}",
+            status=ClaimStatus.NULL,
+        )
+
+    lower = answer_text.lower()
+    if "not available in the extracted results" in lower or "don't have that information" in lower:
+        status = ClaimStatus.NOT_FOUND
+    elif "conflict" in lower or "needs verification" in lower or "flagged" in lower or "verify" in lower:
+        status = ClaimStatus.CONFLICTING
+    else:
+        status = ClaimStatus.SUPPORTED
+
+    source_urls = _extract_source_urls_multi(answer_text, program_reports)
+    return ConverseAnswer(answer=answer_text, status=status, source_urls=source_urls)
 
 
 def answer_question(
@@ -86,6 +140,56 @@ def _build_field_data(field_report: FieldReport) -> str:
         flag = " [NEEDS VERIFICATION]" if entry.status == "flagged" else ""
         lines.append(f"{entry.field_path}: {entry.value}{flag}")
     return "\n".join(lines) if lines else "(no extracted values)"
+
+
+def _build_comparison_brief_text(brief: ComparisonBrief) -> str:
+    lines: list[str] = [f"Programs compared: {', '.join(brief.programs)}"]
+    if brief.overall_winner:
+        lines.append(f"Overall winner: {brief.overall_winner}")
+    lines.append(f"\nExecutive Summary:\n{brief.executive_summary}")
+    if brief.category_verdicts:
+        lines.append("\nCategory Verdicts:")
+        for v in brief.category_verdicts:
+            lines.append(f"  {v.label}: Winner = {v.winner}. {v.insight}")
+    if brief.key_differentiators:
+        lines.append("\nKey Differentiators:")
+        for d in brief.key_differentiators:
+            lines.append(f"  {d.topic} (advantage: {d.advantage}): {d.insight}")
+    if brief.personas:
+        lines.append("\nWho Should Choose:")
+        for p in brief.personas:
+            lines.append(f"  {p.program}: Best for {p.best_for}")
+    return "\n".join(lines)
+
+
+def _build_multi_field_data(program_reports: list[tuple[str, FieldReport | None]]) -> str:
+    sections: list[str] = []
+    for name, field_report in program_reports:
+        if field_report is None:
+            sections.append(f"=== {name} ===\n(no field data available)")
+        else:
+            sections.append(f"=== {name} ===\n{_build_field_data(field_report)}")
+    return "\n\n".join(sections)
+
+
+def _extract_source_urls_multi(
+    answer_text: str,
+    program_reports: list[tuple[str, FieldReport | None]],
+) -> list[str]:
+    import re
+    cited_paths = set(re.findall(r"\((?:[^)]+—\s*)?([a-z_]+\.[a-z_]+(?:\.[a-z_]+)*)\)", answer_text))
+    seen: set[str] = set()
+    urls: list[str] = []
+    for _, field_report in program_reports:
+        if field_report is None:
+            continue
+        for entry in field_report.entries:
+            if entry.field_path in cited_paths or not cited_paths:
+                for url in (entry.source_urls or []):
+                    if url and url not in seen:
+                        seen.add(url)
+                        urls.append(url)
+    return urls[:5]
 
 
 _CONVERSE_CLIENT_POOL: list | None = None

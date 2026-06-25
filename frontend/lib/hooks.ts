@@ -6,7 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { createRun, fetchRun, fetchRuns, postConverse, postClarify, stopRun } from "./api";
+import { createRun, fetchRun, fetchRuns, postCompareConverse, postConverse, postClarify, stopRun } from "./api";
 import type { CreateRunBody } from "./types";
 
 const TERMINAL_STATUSES = new Set(["done", "error", "cancelled"]);
@@ -81,6 +81,16 @@ export function useConverse(runId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (message: string) => postConverse(runId, message),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["run", runId] });
+    },
+  });
+}
+
+export function useCompareConverse(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (message: string) => postCompareConverse(runId, message),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["run", runId] });
     },

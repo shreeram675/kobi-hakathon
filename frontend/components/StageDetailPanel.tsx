@@ -198,8 +198,8 @@ export function StageDetailPanel({
           if (blocks.length === 0 && scrapeStatus !== "running") return null;
 
           const sorted = [...blocks].sort((a, b) => {
-            const aFailed = a.scrape_status !== "success" ? 0 : 1;
-            const bFailed = b.scrape_status !== "success" ? 0 : 1;
+            const aFailed = a.scrape_status !== "success" ? 1 : 0;
+            const bFailed = b.scrape_status !== "success" ? 1 : 0;
             return aFailed - bFailed;
           });
 

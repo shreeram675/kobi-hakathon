@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import os
-from typing import Literal
+from typing import Literal, cast
 
 from langgraph.graph import END, START, StateGraph
 
@@ -21,6 +21,7 @@ def input_validator_node(state: AgentState) -> dict:
     validation_result = validate_conversation(messages)
     update: dict = {
         "validation_result": validation_result,
+        "validation_messages": messages,  # persist so clarify can append to the full conversation
         "updated_at": now_iso(),
     }
 
@@ -257,11 +258,16 @@ def adjudication_node(state: AgentState) -> dict:
             "updated_at": now_iso(),
         }
     except Exception as exc:
+        from adjudication.conflict_adjudicator import _claims_from_field_report
+        extracted_claims = _claims_from_field_report(state.get("field_report"), state.get("run_id", ""))
         return {
             "errors": [
                 *state["errors"],
                 PipelineError(stage="adjudication", message=str(exc)),
             ],
+            "conflicts": [],
+            "adjudicated": [],
+            "extracted_claims": extracted_claims,
             "updated_at": now_iso(),
         }
 
@@ -390,23 +396,23 @@ def run_validation_chat_traced(
 
 
 def run_query_generation(state: AgentState) -> AgentState:
-    return {**state, **query_generator_node(state)}
+    return cast(AgentState, {**state, **query_generator_node(state)})
 
 
 def run_retrieval(state: AgentState) -> AgentState:
-    return {**state, **retrieval_node(state)}
+    return cast(AgentState, {**state, **retrieval_node(state)})
 
 
 def run_firecrawl(state: AgentState) -> AgentState:
-    return {**state, **firecrawl_node(state)}
+    return cast(AgentState, {**state, **firecrawl_node(state)})
 
 
 def run_ingest(state: AgentState) -> AgentState:
-    return {**state, **ingest_node(state)}
+    return cast(AgentState, {**state, **ingest_node(state)})
 
 
 def run_adjudication(state: AgentState) -> AgentState:
-    return {**state, **adjudication_node(state)}
+    return cast(AgentState, {**state, **adjudication_node(state)})
 
 
 def _latest_error_message(state: AgentState, fallback: str) -> str:

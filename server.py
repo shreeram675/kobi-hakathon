@@ -46,7 +46,7 @@ from graph import (
     narrator_node,
 )
 from comparison_brief import generate_comparison_brief
-from converse import answer_question
+from converse import answer_comparison_question, answer_question
 import cost_tracker
 
 app = FastAPI(title="Kobie API")
@@ -95,6 +95,7 @@ class RunRecord:
         self.run_status: str = "running"
         self.conversation: list[dict[str, Any]] = []
         self.compare_b: dict[str, Any] | None = None
+        self.comparison_conversation: list[dict[str, Any]] = []
         self.lock = threading.Lock()
         self.clarification_event = threading.Event()
         self.stop_event = threading.Event()
@@ -144,6 +145,7 @@ def build_run_response(record: RunRecord) -> dict[str, Any]:
         result["status"] = record.run_status
         result["conversation"] = list(record.conversation)
         result["cost_report"] = record.cost_ledger.to_dict()
+        result["comparison_conversation"] = list(record.comparison_conversation)
         if record.compare_b is not None:
             result["compare_b"] = record.compare_b
         if record.mode == "compare":
@@ -445,6 +447,22 @@ def run_pipeline(record: RunRecord) -> None:
             except Exception:
                 logger.exception("[%s] comparison brief generation failed", record.run_id)
 
+            # Seed comparison conversation welcome message
+            done_names = [all_names[i] for i in done_indices]
+            with record.lock:
+                record.comparison_conversation = [
+                    {
+                        "role": "assistant",
+                        "message": (
+                            f"I've completed the comparison of {' vs '.join(done_names)}. "
+                            "Ask me about differences, category winners, key metrics, or any "
+                            "specific aspect of the comparison — I'll answer only from the "
+                            "extracted and compared data."
+                        ),
+                        "created_at": now_iso(),
+                    }
+                ]
+
         with record.lock:
             # Mark any stage still showing "running" as failed
             for s in list(record.stage_status.keys()):
@@ -483,6 +501,72 @@ def run_pipeline(record: RunRecord) -> None:
 
         with record.lock:
             record.run_status = "done" if success else "error"
+
+
+# ── Compare converse endpoint ─────────────────────────────────────────────────
+
+@app.post("/api/run/{run_id}/compare/converse")
+def compare_converse(run_id: str, body: ConverseRequest) -> dict[str, Any]:
+    with STORE_LOCK:
+        record = STORE.get(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if record.mode != "compare":
+        raise HTTPException(status_code=400, detail="not a comparison run")
+    if not body.message.strip():
+        raise HTTPException(status_code=400, detail="message is required")
+
+    with record.lock:
+        comparison_brief = record.state.get("comparison_brief")
+        program_states_snapshot = list(record.program_states)
+        program_names_snapshot = list(record.programs)
+
+    if comparison_brief is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Comparison brief not yet available — please wait for the run to complete.",
+        )
+
+    # Normalise comparison_brief (may be a Pydantic object or a serialised dict)
+    from schemas import ComparisonBrief as _CB, FieldReport as _FR
+    if isinstance(comparison_brief, dict):
+        comparison_brief = _CB.model_validate(comparison_brief)
+
+    # Build per-program (name, FieldReport | None) tuples
+    program_reports: list[tuple[str, FieldReport | None]] = []
+    for i, ps in enumerate(program_states_snapshot):
+        name = program_names_snapshot[i] if i < len(program_names_snapshot) else f"Program {i + 1}"
+        if ps is not None:
+            fr = ps.get("field_report")
+            if isinstance(fr, dict):
+                fr = _FR.model_validate(fr)
+            elif not isinstance(fr, FieldReport):
+                fr = None
+            program_reports.append((name, fr))
+        else:
+            program_reports.append((name, None))
+
+    cost_tracker.set_active_run_id(run_id)
+    try:
+        answer = answer_comparison_question(body.message.strip(), comparison_brief, program_reports)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    created_at = now_iso()
+    with record.lock:
+        record.comparison_conversation.append(
+            {"role": "user", "message": body.message.strip(), "created_at": created_at}
+        )
+        record.comparison_conversation.append(
+            {
+                "role": "assistant",
+                "message": answer.answer,
+                "answer": answer.model_dump(),
+                "created_at": created_at,
+            }
+        )
+
+    return answer.model_dump()
 
 
 # ── Mock field-report data ────────────────────────────────────────────────────
@@ -997,13 +1081,41 @@ def _run_mock_pipeline(record: RunRecord) -> None:
             except Exception:
                 logger.exception("[%s] mock comparison brief generation failed", record.run_id)
 
+        done_indices_mock = [i for i, s in enumerate(record.program_statuses) if s == "done"]
+        done_names_mock = [all_names[i] for i in done_indices_mock]
+        if done_names_mock:
+            with record.lock:
+                record.comparison_conversation = [
+                    {
+                        "role": "assistant",
+                        "message": (
+                            f"I've completed the comparison of {' vs '.join(done_names_mock)}. "
+                            "Ask me about differences, category winners, key metrics, or any "
+                            "specific aspect of the comparison — I'll answer only from the "
+                            "extracted and compared data."
+                        ),
+                        "created_at": now_iso(),
+                    }
+                ]
         with record.lock:
             record.run_status = "done"
         return
 
     # Single program mock
     _run_mock_single(record, record.user_input)
+    program_name = record.state.get("program_name") or record.user_input
     with record.lock:
+        record.conversation = [
+            {
+                "role": "assistant",
+                "message": (
+                    f"I've analysed {program_name}. Ask me anything about its earn "
+                    "rates, tiers, partners, or member sentiment — I'll answer only "
+                    "from the extracted claims."
+                ),
+                "created_at": now_iso(),
+            }
+        ]
         record.run_status = "done"
 
 

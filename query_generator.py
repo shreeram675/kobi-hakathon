@@ -155,33 +155,35 @@ generate a technology query if the program is known to have public
 announcements in press releases or trade publications. Accept null for this
 field rather than wasting queries.
 
+BLOCKED DOMAINS — never generate queries targeting these sites; Firecrawl cannot scrape them:
+reddit.com (all subdomains and subreddits)
+
 SENTIMENT ROUTING
 AIRLINE / HOTEL:
 Primary: site:flyertalk.com [program] [topic]
-         site:reddit.com [program] [topic]
+         site:trustpilot.com [program]
 Topics: complaints, devaluation, worth it, redemption sweet spots
 
 BANKING / CREDIT CARD:
-Primary: site:reddit.com [program] review
-         site:trustpilot.com [program]
+Primary: site:trustpilot.com [program]
+         site:technofino.com [program]
 Indian programs also:
          site:technofino.com [program]
-         site:reddit.com/r/CreditCardsIndia [program]
+         site:cardexpert.in [program]
 
 RETAIL / E-COMMERCE / COALITION:
 Primary: [program] app reviews Google Play
          [program] app reviews Apple App Store
-         site:reddit.com [program] complaints
          site:trustpilot.com [program]
 Indian programs also:
          site:cardexpert.in [program]
-         site:reddit.com/r/IndiaInvestments [program]
+         site:technofino.com [program]
 
 INDIA-SPECIFIC SOURCES when geography = IN:
 News: [program] site:economictimes.indiatimes.com
       [program] members announcement Mint
 Analysis: site:technofino.com OR site:cardexpert.in [program]
-Sentiment: site:reddit.com/r/CreditCardsIndia OR r/IndiaInvestments
+Sentiment: site:technofino.com [program] OR site:cardexpert.in [program]
 
 MEMBERSHIP SCALE QUERIES
 Public companies:
@@ -204,6 +206,30 @@ FIELD-QUERY MAPPING
 In the output, map each priority field to the query IDs most likely to retrieve
 it. This enables the downstream extractor to run targeted extraction per page
 rather than full schema extraction on every page.
+
+SOURCE TYPE ENUM
+Every query MUST have a source_type from exactly this list (lowercase, no other values):
+- "official"    : brand-owned program pages, membership portals, earn/redeem help pages
+- "terms"       : terms and conditions, legal documents, cardholder agreements
+- "faq"         : FAQ and help center pages
+- "valuation"   : points/miles/cashback value, CPP analysis, redemption value benchmarks
+- "partners"    : partner lists, transfer partner pages, redemption network pages
+- "app_reviews" : app store or Google Play store reviews and ratings
+- "forums"      : community forums (flyertalk), consumer review sites (trustpilot), sentiment
+- "competitors" : competitive comparison, vs. analysis, benchmark reports
+- "news"        : press releases, news articles, program change / devaluation announcements
+- "financial"   : annual reports, investor presentations, loyalty liability disclosures
+
+DO NOT invent other values. Map these common cases explicitly:
+  "site:trustpilot.com ..."                  → "forums"
+  "site:flyertalk.com ..."                   → "forums"
+  "... complaints / praise / reviews ..."    → "forums"
+  "... app review Google Play ..."           → "app_reviews"
+  "... App Store rating ..."                 → "app_reviews"
+  "... vs ... / comparison ..."              → "competitors"
+  "... redemption value / cpp / valuation"   → "valuation"
+  "... annual report / investor / liability" → "financial"
+  "... devaluation / recent changes ..."     → "news"
 
 OUTPUT
 Return ONLY valid JSON. No explanation. No markdown.
@@ -236,6 +262,17 @@ Return ONLY valid JSON. No explanation. No markdown.
   ]
 }
 
+QUERY ORDERING
+Rank queries within the output by extraction priority — highest-value schema fields first:
+1. Earn mechanics (earn_rate_base, bonus_categories, non_transactional_earn)
+2. Tier structure (tier_names, qualification_criteria, tier_benefits)
+3. Burn/redemption (redemption_options, point_value_cpp, redemption_thresholds, expiry_policy)
+4. Partnerships and transfers (transfer_partners, partner_names, partnership_type)
+5. Digital experience (app_ratings, mobile_app, personalization, gamification)
+6. Membership scale / financial (membership_count, loyalty_liability)
+7. Sentiment and competitive position (member_sentiment, competitive_position, closest_competitors)
+Source type should NOT determine ordering; field coverage determines ordering.
+
 VALIDATION RULES checked by the calling system:
 - query count < 9 or > 15 is invalid
 - any query over 10 words is invalid
@@ -247,6 +284,8 @@ VALIDATION RULES checked by the calling system:
 - at least one query must target the mobile app / digital experience
 - at least one query must target the complete tier structure listing ALL status levels
 - at least one query must target the transfer/exchange partner list or partner overview page
+- no query may contain "reddit.com" or target any domain on the blocked list
+- every query source_type must be one of the 10 values in SOURCE TYPE ENUM (lowercase)
 """.strip()
 
 
@@ -405,6 +444,108 @@ class GroqQueryGeneratorClient:
         raise last_exc or RuntimeError("GroqQueryGeneratorClient: exhausted all keys.")
 
 
+_CANONICAL_SOURCE_TYPES = frozenset({
+    "official", "terms", "faq", "valuation", "partners",
+    "app_reviews", "forums", "competitors", "news", "financial",
+})
+
+# Maps LLM-generated drift values to their canonical equivalents.
+# None means "ambiguous — fall back to infer_source_type on the query text."
+_SOURCE_TYPE_ALIASES: dict[str, str | None] = {
+    # Capitalization / pluralisation variants of canonical names
+    "forum": "forums",
+    "partner": "partners",
+    "app_review": "app_reviews",
+    # LLM-invented names seen in practice
+    "sentiment": "forums",
+    "review": None,       # could be app_reviews OR forums — let text inference decide
+    "reviews": None,
+    "comparison": "competitors",
+    "competitive": "competitors",
+    "competitor": "competitors",
+    "analysis": "competitors",   # "competitive analysis" context
+    "investor": "financial",
+    "ir": "financial",
+    "ir_filing": "financial",
+}
+
+
+def _normalize_source_type(raw: str, query: str) -> str:
+    """Map a raw source_type string from the LLM to a canonical value.
+
+    Lowercases first; checks the canonical set; resolves known aliases;
+    falls back to infer_source_type on the query text for ambiguous or unknown types.
+    """
+    lowered = raw.strip().lower()
+    if lowered in _CANONICAL_SOURCE_TYPES:
+        return lowered
+    resolved = _SOURCE_TYPE_ALIASES.get(lowered)
+    if resolved is not None:
+        return resolved
+    return infer_source_type(query)
+
+
+# Priority tier for each target_field name — lower number = higher priority.
+# Queries covering tier-1 fields should run before tier-4 sentiment queries so the
+# scraper/extractor spends its budget on high-value schema fields first.
+_FIELD_EXTRACTION_PRIORITY: dict[str, int] = {
+    # Tier 1 — core transactional fields
+    "earn_rate_base": 1, "base_earn_rate": 1, "bonus_categories": 1,
+    "non_transactional_earn": 1,
+    "tier_names": 1, "tier_structure": 1, "qualification_criteria": 1, "tier_benefits": 1,
+    "redemption_options": 1, "point_value_cpp": 1, "redemption_thresholds": 1,
+    "expiry_policy": 1,
+    # Tier 2 — partnerships and transfers
+    "transfer_partners": 2, "partner_names": 2, "partnership_type": 2, "partnerships": 2,
+    "partner_ecosystem": 2, "redemption_network": 2,
+    # Tier 3 — digital experience and program rules
+    "app_ratings": 3, "mobile_app": 3, "personalization": 3, "gamification": 3,
+    "app_store_rating": 3, "play_store_rating": 3,
+    "lounge_access": 3, "reward_rate": 3, "cashback_value": 3,
+    "award_chart": 3, "elite_nights": 3, "alliance_partners": 3,
+    # Tier 4 — scale, sentiment, competitive
+    "membership_count": 4, "loyalty_liability": 4,
+    "member_sentiment": 4, "common_complaints": 4, "common_praise": 4,
+    "competitive_position": 4, "closest_competitors": 4,
+    "recent_changes_last_6_months": 4,
+}
+
+_DEFAULT_FIELD_PRIORITY = 3
+
+
+def _query_extraction_priority(query: "SearchQuery") -> int:
+    """Return the best (lowest) extraction priority tier across a query's target_fields.
+
+    Queries with no target_fields get a neutral mid-tier score so they don't
+    crowd out high-value queries but aren't pushed all the way to the end.
+    """
+    if not query.target_fields:
+        return _DEFAULT_FIELD_PRIORITY
+    return min(
+        _FIELD_EXTRACTION_PRIORITY.get(field, _DEFAULT_FIELD_PRIORITY)
+        for field in query.target_fields
+    )
+
+
+def _rank_queries_by_extraction_priority(queries: list["SearchQuery"]) -> list["SearchQuery"]:
+    """Stable-sort queries so high extraction-value fields come first.
+
+    Source type is not used as a sort key — only target_fields coverage matters.
+    """
+    return sorted(queries, key=_query_extraction_priority)
+
+
+_BLOCKED_DOMAIN_PATTERNS = ("reddit.com",)
+
+
+def _filter_blocked_queries(queries: list["SearchQuery"]) -> list["SearchQuery"]:
+    """Drop any query whose text targets a domain the scraper cannot access."""
+    return [
+        q for q in queries
+        if not any(domain in q.query.lower() for domain in _BLOCKED_DOMAIN_PATTERNS)
+    ]
+
+
 def generate_queries(
     identity: ProgramIdentity,
     client: QueryGeneratorClient | None = None,
@@ -420,14 +561,20 @@ def generate_queries(
                 try:
                     payload = groq_client.complete_json(build_query_generator_prompt(identity))
                     output = parse_query_generation_output(payload, identity=identity)
-                    return output.model_copy(update={"queries": _anchor_year_to_volatile_queries(output.queries)})
+                    ranked = _rank_queries_by_extraction_priority(
+                        _filter_blocked_queries(_anchor_year_to_volatile_queries(output.queries))
+                    )
+                    return output.model_copy(update={"queries": ranked})
                 except Exception:
                     pass
             if _local_fallback_enabled():
                 return build_local_query_generation_output(identity, reason=f"Gemini returned {status_code}")
         raise
     output = parse_query_generation_output(payload, identity=identity)
-    return output.model_copy(update={"queries": _anchor_year_to_volatile_queries(output.queries)})
+    ranked = _rank_queries_by_extraction_priority(
+        _filter_blocked_queries(_anchor_year_to_volatile_queries(output.queries))
+    )
+    return output.model_copy(update={"queries": ranked})
 
 
 def build_local_query_generation_output(identity: ProgramIdentity, reason: str) -> QueryGenerationOutput:
@@ -453,12 +600,15 @@ def build_local_query_generation_output(identity: ProgramIdentity, reason: str) 
             )
         )
 
-    queries = _anchor_year_to_volatile_queries(queries)
+    queries = _rank_queries_by_extraction_priority(
+        _filter_blocked_queries(_anchor_year_to_volatile_queries(queries))
+    )
     external_to_internal = {query.external_query_id: query.query_id for query in queries if query.external_query_id}
     field_query_map: dict[str, list[str]] = {}
     for query in queries:
         for field in query.target_fields:
-            field_query_map.setdefault(field, []).append(external_to_internal[query.external_query_id])
+            if query.external_query_id:
+                field_query_map.setdefault(field, []).append(external_to_internal[query.external_query_id])
 
     return QueryGenerationOutput(
         detected_category=domain,
@@ -495,6 +645,7 @@ _YEAR_ANCHOR_SOURCE_TYPES = frozenset({
     "forums",
     "forum",
     "competitors",
+    "financial",
 })
 
 
@@ -552,7 +703,12 @@ def parse_query_generation_output(
             target_fields: list[str] = []
         elif isinstance(item, dict):
             query = str(item.get("query") or "").strip()
-            source_type = str(item.get("source_type") or infer_source_type(query)).strip()
+            raw_source_type = str(item.get("source_type") or "").strip()
+            source_type = (
+                _normalize_source_type(raw_source_type, query)
+                if raw_source_type
+                else infer_source_type(query)
+            )
             external_query_id = item.get("query_id")
             intent = item.get("intent")
             target_fields = [str(field) for field in item.get("target_fields", [])]
@@ -606,7 +762,7 @@ def empty_to_none(value: object) -> str | None:
 
 def normalize_coverage(value: object) -> float:
     try:
-        coverage = float(value)
+        coverage = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(1.0, coverage))
@@ -668,7 +824,7 @@ def _domain_query_templates(domain: str, geography: str) -> list[dict[str, Any]]
             "source_type": "news",
         },
         {
-            "suffix": "reddit complaints review",
+            "suffix": "trustpilot complaints review",
             "intent": "member sentiment",
             "target_fields": ["member_sentiment", "common_complaints"],
             "source_type": "forums",
@@ -805,16 +961,42 @@ def infer_source_type(query: str) -> str:
         return "terms"
     if "faq" in lowered:
         return "faq"
+    # Financial / investor relations — check before "partner" to avoid false match on "annual"
+    if (
+        "annual report" in lowered
+        or "investor presentation" in lowered
+        or "loyalty liability" in lowered
+        or "deferred revenue" in lowered
+        or "bond prospectus" in lowered
+    ):
+        return "financial"
     if "partner" in lowered or "transfer" in lowered:
         return "partners"
-    if "app" in lowered or "rating" in lowered or "play store" in lowered:
+    # App store reviews — must check before generic "app" in case "app" appears in other queries
+    if "google play" in lowered or "app store" in lowered or "play store" in lowered:
         return "app_reviews"
-    if "reddit" in lowered or "forum" in lowered or "complaint" in lowered:
+    if "rating" in lowered and "app" in lowered:
+        return "app_reviews"
+    # Community forums and consumer sentiment
+    if (
+        "reddit" in lowered
+        or "flyertalk" in lowered
+        or "trustpilot" in lowered
+        or "forum" in lowered
+        or "complaint" in lowered
+        or "praise" in lowered
+    ):
         return "forums"
-    if "competitor" in lowered or "comparison" in lowered:
+    # Competitive analysis
+    if "competitor" in lowered or "comparison" in lowered or " vs " in lowered:
         return "competitors"
-    if "value" in lowered or "valuation" in lowered:
+    # Redemption / points value analysis
+    if "value" in lowered or "valuation" in lowered or "cpp" in lowered or "cents per point" in lowered:
         return "valuation"
-    if "news" in lowered or "recent" in lowered:
+    # Time-sensitive news / change tracking
+    if "news" in lowered or "recent" in lowered or "devaluation" in lowered or "changes" in lowered:
         return "news"
+    # App (broad) — mobile experience without explicit store reference
+    if "app" in lowered or "mobile" in lowered:
+        return "app_reviews"
     return "official"
