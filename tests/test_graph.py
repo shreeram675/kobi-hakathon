@@ -81,7 +81,7 @@ def test_graph_routes_resolved_validator_output_to_query_generator(monkeypatch):
     monkeypatch.setattr(graph, "validate_conversation", lambda messages: resolved_validation_result())
     monkeypatch.setattr(graph, "generate_queries", lambda identity: fake_query_output())
     monkeypatch.setattr(graph, "retrieve_urls", lambda queries: fake_retrieval_output(queries))
-    monkeypatch.setattr(graph, "scrape_retrieved_urls", lambda urls: fake_firecrawl_output(urls))
+    monkeypatch.setattr(graph, "scrape_retrieved_urls", lambda urls, on_progress=None: fake_firecrawl_output(urls))
 
     state = graph.run_validation_chat([{"role": "user", "content": "Air India"}])
 
@@ -100,7 +100,7 @@ def test_query_generator_can_run_explicitly(monkeypatch):
     monkeypatch.setattr(graph, "validate_conversation", lambda messages: resolved_validation_result())
     monkeypatch.setattr(graph, "generate_queries", lambda identity: fake_query_output())
     monkeypatch.setattr(graph, "retrieve_urls", lambda queries: fake_retrieval_output(queries))
-    monkeypatch.setattr(graph, "scrape_retrieved_urls", lambda urls: fake_firecrawl_output(urls))
+    monkeypatch.setattr(graph, "scrape_retrieved_urls", lambda urls, on_progress=None: fake_firecrawl_output(urls))
 
     state = graph.run_validation_chat([{"role": "user", "content": "Air India"}])
     state = graph.run_query_generation(state)
@@ -108,8 +108,7 @@ def test_query_generator_can_run_explicitly(monkeypatch):
     assert state["search_queries"]
 
 
-def test_firecrawl_url_selection_prioritizes_high_value_sources(monkeypatch):
-    monkeypatch.setenv("MAX_FIRECRAWL_URLS", "2")
+def test_firecrawl_url_selection_prioritizes_high_value_sources():
     urls = [
         RetrievedUrl(url="https://forum.example", canonical_url="https://forum.example", score=1.0, query="q", source_type="forums"),
         RetrievedUrl(url="https://official.example", canonical_url="https://official.example", score=0.4, query="q", source_type="official"),
@@ -118,12 +117,13 @@ def test_firecrawl_url_selection_prioritizes_high_value_sources(monkeypatch):
 
     selected = graph.select_urls_for_firecrawl(urls)
 
-    assert [item.url for item in selected] == ["https://official.example", "https://terms.example"]
+    # All URLs are returned; high-priority source types appear first.
+    assert len(selected) == 3
+    assert [item.url for item in selected[:2]] == ["https://official.example", "https://terms.example"]
+    assert selected[-1].url == "https://forum.example"
 
 
-def test_firecrawl_url_selection_covers_every_query_before_repeating(monkeypatch):
-    monkeypatch.setenv("MAX_FIRECRAWL_URLS", "4")
-
+def test_firecrawl_url_selection_covers_every_query_before_repeating():
     def retrieved(url, score, query_id, source_type):
         return RetrievedUrl(url=url, canonical_url=url, score=score, query="q", query_id=query_id, source_type=source_type)
 
@@ -139,9 +139,11 @@ def test_firecrawl_url_selection_covers_every_query_before_repeating(monkeypatch
 
     selected = graph.select_urls_for_firecrawl(urls)
 
-    assert len(selected) == 4
-    assert {item.query_id for item in selected} == {"q_official", "q_forum", "q_review", "q_financial"}
-    assert "https://official.example/1" in {item.url for item in selected}
+    # All 7 URLs are returned in priority order.
+    assert len(selected) == 7
+    # The first 4 positions cover all four distinct queries (round-robin interleaving).
+    assert {item.query_id for item in selected[:4]} == {"q_official", "q_forum", "q_review", "q_financial"}
+    assert selected[0].url == "https://official.example/1"
 
 
 def test_graph_stops_after_input_validator_when_clarification_needed(monkeypatch):

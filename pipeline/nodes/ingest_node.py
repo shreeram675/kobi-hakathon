@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,11 @@ def ingest_node(
 ) -> dict[str, Any]:
     """Run raw store, chunking, extraction, normalization, and packet storage."""
 
-    blocks = state.get("scraped_blocks", [])
+    firecrawl_blocks = state.get("scraped_blocks", [])
+    additional_blocks = list(state.get("additional_blocks") or [])
+    # additional_blocks (Wikipedia, etc.) go first so extraction sees high-quality
+    # structured text before noisy scraped content.
+    blocks = [*additional_blocks, *firecrawl_blocks]
     if not blocks:
         return {
             "errors": [
@@ -62,8 +67,17 @@ def ingest_node(
         brand=state.get("brand"),
     )
 
-    extracted_packets = extract_from_chunks(extraction_chunks, config, client=extractor_client)
+    extraction_context = _build_extraction_context(state)
+    extracted_packets = extract_from_chunks(
+        extraction_chunks,
+        config,
+        client=extractor_client,
+        extraction_context=extraction_context,
+    )
     normalized_packets = [normalize_packet(packet, config) for packet in extracted_packets]
+    prefetched_ratings = state.get("prefetched_app_ratings")
+    if prefetched_ratings is not None:
+        normalized_packets = [prefetched_ratings, *normalized_packets]
     persist_normalized_packets(normalized_packets, db_path=db_path)
     field_report = build_field_report(normalized_packets, config, entity_name=state.get("program_name"))
 
@@ -130,3 +144,16 @@ def _resolve_target_fields(field_name: str, valid_fields: set[str]) -> list[str]
         return [normalized]
     alias_key = normalized.lower().replace(" ", "_")
     return [field for field in FIELD_ALIASES.get(alias_key, ()) if field in valid_fields]
+
+
+def _build_extraction_context(state: AgentState) -> dict[str, Any]:
+    """Build the context dict passed to the extraction prompt for every batch in this run."""
+    ctx: dict[str, Any] = {"reference_year": datetime.now(timezone.utc).year}
+    for key in ("program_name", "brand", "program_subtype"):
+        value = state.get(key)
+        if value is not None:
+            ctx[key] = value
+    result = state.get("query_generation_result")
+    if result and result.priority_fields:
+        ctx["priority_fields"] = result.priority_fields
+    return ctx

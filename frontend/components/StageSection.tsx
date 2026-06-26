@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Loader2 } from "lucide-react";
+import { Check, Loader2, Clock } from "lucide-react";
 import { type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,7 +8,6 @@ import { stageMeta } from "@/lib/schema";
 import { cn } from "@/lib/format";
 import type { StageStatus } from "@/lib/types";
 
-/** Anchored section wrapper for one pipeline stage in the right detail panel. */
 export function StageSection({
   stageId,
   status,
@@ -21,31 +20,64 @@ export function StageSection({
   aside?: ReactNode;
 }) {
   const meta = stageMeta(stageId);
+
+  const headerBg = {
+    done:    "bg-soft-green border-green/15",
+    running: "bg-[#e2f3f3] border-teal/20",
+    error:   "bg-soft-red border-red/20",
+    idle:    "bg-soft-grey border-line",
+  }[status];
+
+  const numBg = {
+    done:    "bg-green text-white",
+    running: "bg-teal text-white",
+    error:   "bg-red text-white",
+    idle:    "bg-line text-ink/40",
+  }[status];
+
   return (
-    <section id={`stage-${stageId}`} className="scroll-mt-4">
-      <div className="mb-3 flex items-center gap-2.5">
+    <section id={`stage-${stageId}`} className="scroll-mt-6">
+      {/* ── Stage header ── */}
+      <div
+        className={cn(
+          "flex items-center gap-3 rounded-t-[10px] border-x border-t px-4 py-2.5",
+          headerBg,
+        )}
+      >
+        {/* numbered badge */}
         <span
           className={cn(
-            "grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-semibold",
-            status === "done" && "bg-soft-green text-green",
-            status === "running" && "bg-[#e2f3f3] text-teal",
-            status === "error" && "bg-soft-red text-red",
-            status === "idle" && "bg-soft-grey text-ink/40",
+            "grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-bold",
+            numBg,
           )}
         >
           {status === "done" ? (
-            <Check className="h-4 w-4" />
+            <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
           ) : status === "running" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
             meta?.index
           )}
         </span>
-        <h2 className="text-base font-semibold text-navy">{meta?.label}</h2>
+
+        {/* label */}
+        <h2 className="flex-1 text-[13px] font-semibold tracking-tight text-navy">
+          {meta?.label}
+        </h2>
+
+        {/* status pill */}
         <StageStatusPill status={status} />
-        {aside && <div className="ml-auto">{aside}</div>}
+
+        {aside && <div className="ml-1">{aside}</div>}
       </div>
-      <div className="rounded-card border border-line bg-white p-4 shadow-panel">
+
+      {/* ── Stage body ── */}
+      <div
+        className={cn(
+          "rounded-b-[10px] border border-t-0 bg-white px-4 py-4 shadow-sm",
+          status === "error" ? "border-red/20" : "border-line",
+        )}
+      >
         {status === "idle" ? (
           <PendingPlaceholder />
         ) : status === "running" ? (
@@ -59,38 +91,35 @@ export function StageSection({
 }
 
 function StageStatusPill({ status }: { status: StageStatus }) {
-  const map = {
-    done: { tone: "green" as const, label: "Done" },
-    running: { tone: "teal" as const, label: "Running" },
-    error: { tone: "red" as const, label: "Error" },
-    idle: { tone: "grey" as const, label: "Pending" },
-  };
-  const m = map[status];
+  if (status === "done") return <Badge tone="green">Done</Badge>;
+  if (status === "running") return <Badge tone="teal" dot>Running</Badge>;
+  if (status === "error") return <Badge tone="red">Error</Badge>;
   return (
-    <Badge tone={m.tone} dot={status === "running"}>
-      {m.label}
-    </Badge>
+    <span className="inline-flex items-center gap-1 rounded-pill bg-soft-grey px-2 py-0.5 text-[10px] font-medium text-ink/40">
+      <Clock className="h-3 w-3" /> Pending
+    </span>
   );
 }
 
 function PendingPlaceholder() {
   return (
-    <p className="py-6 text-center text-sm text-ink/35">
+    <div className="flex items-center gap-2 py-4 text-center text-xs text-ink/35 justify-center">
+      <Clock className="h-3.5 w-3.5 text-ink/25" />
       Waiting for upstream stages…
-    </p>
+    </div>
   );
 }
 
 function RunningPlaceholder() {
   return (
-    <div className="space-y-3">
-      <Skeleton className="h-4 w-2/3" />
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div className="space-y-3 py-1">
+      <Skeleton className="h-3.5 w-2/5" />
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-16" />
+          <Skeleton key={i} className="h-[62px]" />
         ))}
       </div>
-      <Skeleton className="h-24 w-full" />
+      <Skeleton className="h-20 w-full" />
     </div>
   );
 }

@@ -65,6 +65,7 @@ def store_firecrawl_output(
                     "source_type": source.source_type if source else None,
                     "external_query_id": source.external_query_id if source else None,
                     "query": source.query if source else None,
+                    "published_date": block.published_date,
                 },
             )
         )

@@ -94,7 +94,13 @@ def adjudicator_node(state: AgentState) -> AgentState:
         confidence_b = float(conflict["claim_b"].get("confidence") or 0.0)
         score_gap = abs(confidence_a - confidence_b)
 
-        if score_gap > AUTO_RESOLVE_SCORE_GAP:
+        # If both claims carry the same value, pick the higher-confidence one and
+        # auto-resolve — no debate needed when sources agree on content.
+        value_a = str(conflict["claim_a"].get("value") or "").strip().lower()
+        value_b = str(conflict["claim_b"].get("value") or "").strip().lower()
+        values_identical = value_a == value_b and value_a != ""
+
+        if score_gap > AUTO_RESOLVE_SCORE_GAP or values_identical:
             winner = "A" if confidence_a >= confidence_b else "B"
             claim = conflict["claim_a"] if winner == "A" else conflict["claim_b"]
             adjudicated.append(
@@ -116,7 +122,15 @@ def adjudicator_node(state: AgentState) -> AgentState:
                 "claim_ids": [],
                 "score_gap": round(score_gap, 4),
                 "resolution_status": "auto_resolved",
-                "judge_reason": f"Auto-resolved: confidence gap {score_gap:.2f} exceeded threshold.",
+                "judge_reason": (
+                    "Auto-resolved: both sources agree on the same value."
+                    if values_identical
+                    else f"Auto-resolved: confidence gap {score_gap:.2f} exceeded threshold."
+                ),
+                "value_a": str(conflict["claim_a"].get("value") or ""),
+                "value_b": str(conflict["claim_b"].get("value") or ""),
+                "url_a": conflict["claim_a"].get("source_url"),
+                "url_b": conflict["claim_b"].get("source_url"),
             })
         else:
             debated_record_indices.append(len(conflict_records))
@@ -129,6 +143,10 @@ def adjudicator_node(state: AgentState) -> AgentState:
                 "score_gap": round(score_gap, 4),
                 "resolution_status": "debate_required",
                 "judge_reason": "",
+                "value_a": str(conflict["claim_a"].get("value") or ""),
+                "value_b": str(conflict["claim_b"].get("value") or ""),
+                "url_a": conflict["claim_a"].get("source_url"),
+                "url_b": conflict["claim_b"].get("source_url"),
             })
 
     if debated:
@@ -137,7 +155,8 @@ def adjudicator_node(state: AgentState) -> AgentState:
             entries = _entries_from_debate(conflict, result)
             adjudicated.extend(entries)
             if result.get("winner") == "FLAG":
-                human_review_items.append(_build_human_review_item(conflict, result, run_id))
+                score_gap = conflict_records[rec_idx].get("score_gap", 0.0)
+                human_review_items.append(_build_human_review_item(conflict, result, run_id, score_gap))
                 conflict_records[rec_idx]["resolution_status"] = "manual_review_needed"
                 conflict_records[rec_idx]["judge_reason"] = result.get("reasoning") or FLAG_TEXT
             else:
@@ -161,13 +180,20 @@ def adjudicator_node(state: AgentState) -> AgentState:
 
 
 def _build_human_review_item(
-    conflict: dict[str, Any], debate_result: dict[str, Any], run_id: str
+    conflict: dict[str, Any], debate_result: dict[str, Any], run_id: str, score_gap: float = 0.0
 ) -> dict[str, Any]:
     """Build a structured human-review queue entry when the judge returns FLAG."""
+    field_path = str(conflict["field_name"])
+    claim_a_id = str(conflict["claim_a"].get("claim_id") or "")
+    claim_b_id = str(conflict["claim_b"].get("claim_id") or "")
     return {
         "review_id": new_id("review"),
         "run_id": run_id,
-        "field_name": str(conflict["field_name"]),
+        "field_path": field_path,
+        "field_name": field_path,
+        "reason": debate_result.get("reasoning") or FLAG_TEXT,
+        "claim_ids": [cid for cid in [claim_a_id, claim_b_id] if cid],
+        "score_gap": round(score_gap, 4),
         "claim_a": conflict["claim_a"],
         "claim_b": conflict["claim_b"],
         "volatility": conflict.get("volatility"),
@@ -191,17 +217,66 @@ def _build_human_review_item(
 async def _run_debates(conflicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # Reset pool so clients rebind to the event loop created by asyncio.run().
     import adjudication.debate_engine as _de
-    _de._GROQ_SEMAPHORE = asyncio.Semaphore(3)
+    _de._GROQ_SEMAPHORE = asyncio.Semaphore(5)
     _de._CLIENT_POOL = None
     _de._POOL_COUNTER = 0
-    # Debates run concurrently; the semaphore caps Groq calls at 3.
-    return list(await asyncio.gather(*(run_debate(conflict, use_rebuttal=True) for conflict in conflicts)))
+
+    async def _safe_debate(conflict: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await run_debate(conflict, use_rebuttal=True)
+        except Exception as exc:
+            return {
+                "field_name": conflict.get("field_name", ""),
+                "winner": "FLAG",
+                "winning_value": None,
+                "deciding_factor": "unresolvable",
+                "reasoning": f"Debate engine error: {exc}",
+                "rebuttal_assessment": {"A_rebuttal": "weak", "B_rebuttal": "weak"},
+                "hallucination_detected": {"argument_a": False, "argument_b": False, "rebuttal_a": False, "rebuttal_b": False},
+                "argument_a": "", "argument_b": "", "rebuttal_a": "", "rebuttal_b": "",
+                "final_confidence": FLAG_CONFIDENCE,
+                "steps_used": 0,
+            }
+
+    return list(await asyncio.gather(*(_safe_debate(c) for c in conflicts)))
+
+
+def _rounds_from_result(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert debate engine output into frontend-consumable DebateRound list."""
+    rounds = []
+    n = 1
+    if result.get("argument_a"):
+        rounds.append({"round": n, "phase": "opening", "agent": "Advocate A", "argument": result["argument_a"]})
+        n += 1
+    if result.get("argument_b"):
+        rounds.append({"round": n, "phase": "opening_b", "agent": "Advocate B", "argument": result["argument_b"]})
+        n += 1
+    if result.get("rebuttal_a"):
+        rounds.append({"round": n, "phase": "cross", "agent": "Advocate A", "argument": result["rebuttal_a"]})
+        n += 1
+    if result.get("rebuttal_b"):
+        rounds.append({"round": n, "phase": "cross_b", "agent": "Advocate B", "argument": result["rebuttal_b"]})
+        n += 1
+    deciding = result.get("deciding_factor", "")
+    reasoning = result.get("reasoning", "")
+    if deciding:
+        rounds.append({"round": n, "phase": "evidence", "agent": "Evidence Referee", "argument": f"Deciding factor: {deciding}. {reasoning}"})
+        n += 1
+    winner = result.get("winner", "FLAG")
+    winning_value = result.get("winning_value")
+    if winner in ("A", "B") and winning_value:
+        rounds.append({"round": n, "phase": "final_decision", "agent": "Judge", "argument": f"Winner: Claim {winner} — accepted value: {winning_value}. {reasoning}"})
+    else:
+        rounds.append({"round": n, "phase": "final_decision", "agent": "Judge", "argument": f"FLAG: {reasoning or 'Could not resolve — escalated to human review.'}"})
+    return rounds
 
 
 def _entries_from_debate(conflict: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
+    rounds = _rounds_from_result(result)
+    claim_a = conflict["claim_a"]
+    claim_b = conflict["claim_b"]
+
     if result["winner"] == "FLAG":
-        # Use the debate's final_confidence (judge may have adjusted it) rather than
-        # the hard-coded constant, falling back to FLAG_CONFIDENCE if absent.
         flag_confidence = float(result.get("final_confidence") or FLAG_CONFIDENCE)
         return [
             {
@@ -215,11 +290,16 @@ def _entries_from_debate(conflict: dict[str, Any], result: dict[str, Any]) -> li
                 "reasoning": result.get("reasoning", ""),
                 "flag": FLAG_TEXT,
                 "debate": result,
+                "rounds": rounds,
+                "value_a": str(claim_a.get("value") or ""),
+                "value_b": str(claim_b.get("value") or ""),
+                "url_a": claim_a.get("source_url"),
+                "url_b": claim_b.get("source_url"),
             }
-            for claim in (conflict["claim_a"], conflict["claim_b"])
+            for claim in (claim_a, claim_b)
         ]
 
-    claim = conflict["claim_a"] if result["winner"] == "A" else conflict["claim_b"]
+    claim = claim_a if result["winner"] == "A" else claim_b
     return [
         {
             "field_name": conflict["field_name"],
@@ -231,6 +311,11 @@ def _entries_from_debate(conflict: dict[str, Any], result: dict[str, Any]) -> li
             "deciding_factor": result.get("deciding_factor", ""),
             "reasoning": result.get("reasoning", ""),
             "debate": result,
+            "rounds": rounds,
+            "value_a": str(claim_a.get("value") or ""),
+            "value_b": str(claim_b.get("value") or ""),
+            "url_a": claim_a.get("source_url"),
+            "url_b": claim_b.get("source_url"),
         }
     ]
 
@@ -396,19 +481,29 @@ _FIELD_STATUS_TO_CLAIM_STATUS = {
 }
 
 
+def _field_attr(entry: Any, attr: str, default: Any = None) -> Any:
+    """Get an attribute from either a Pydantic model or a plain dict safely."""
+    if isinstance(entry, dict):
+        return entry.get(attr, default)
+    return getattr(entry, attr, default)
+
+
 def _claims_from_field_report(field_report: Any, run_id: str) -> list[dict[str, Any]]:
     """Convert FieldReport entries into Claim-compatible dicts for the UI."""
     if field_report is None:
         return []
-    entries = getattr(field_report, "entries", None) or field_report.get("entries", [])
+    if isinstance(field_report, dict):
+        entries = field_report.get("entries", [])
+    else:
+        entries = getattr(field_report, "entries", []) or []
     claims = []
     for entry in entries:
-        fp = getattr(entry, "field_path", None) or entry.get("field_path", "")
-        val = getattr(entry, "value", None) or entry.get("value")
-        st = getattr(entry, "status", None) or entry.get("status", "not_found")
-        src_urls = getattr(entry, "source_urls", None) or entry.get("source_urls", [])
-        snippet = getattr(entry, "source_snippet", None) or entry.get("source_snippet")
-        conf = getattr(entry, "confidence", None) or entry.get("confidence") or 0.0
+        fp = _field_attr(entry, "field_path", "")
+        val = _field_attr(entry, "value")
+        st = _field_attr(entry, "status", "not_found")
+        src_urls = _field_attr(entry, "source_urls") or []
+        snippet = _field_attr(entry, "source_snippet")
+        conf = _field_attr(entry, "confidence") or 0.0
         volatility = "high" if classify_volatility(fp) == "HIGH" else "low"
         claims.append({
             "claim_id": new_id("claim"),

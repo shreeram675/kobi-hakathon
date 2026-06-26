@@ -11,7 +11,7 @@ export function Logo({
 }) {
   return (
     <Link href="/" className={cn("group flex items-center gap-2.5", className)}>
-      <span className="relative grid h-9 w-9 place-items-center rounded-[10px] bg-gradient-to-br from-navy via-[#155e6b] to-teal shadow-[0_4px_14px_rgba(15,124,125,0.45)]">
+      <span className="relative grid h-9 w-9 place-items-center rounded-[10px] bg-gradient-to-br from-[#1a3a5c] via-[#c25e10] to-[#F47920] shadow-[0_4px_14px_rgba(244,121,32,0.5)]">
         <span className="absolute inset-0 rounded-[10px] ring-1 ring-inset ring-white/15" />
         <KMark className="h-4 w-4 text-white" />
       </span>

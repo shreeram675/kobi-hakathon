@@ -1,32 +1,49 @@
 "use client";
 
-import { Bot, CornerDownLeft, User } from "lucide-react";
+import { Bot, CornerDownLeft, ExternalLink, User } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/textarea";
 import { StatusBadge } from "./badges";
-import { useConverse } from "@/lib/hooks";
+import { useCompareConverse, useConverse } from "@/lib/hooks";
 import { cn } from "@/lib/format";
 import type { ConverseTurn } from "@/lib/types";
 
-const SUGGESTIONS = [
+const SINGLE_SUGGESTIONS = [
   "What is the base earn rate?",
   "List the elite tiers",
   "Who are the closest competitors?",
 ];
 
-/** Chat bubbles + composer for converse mode (grounded follow-up Q&A). */
+const COMPARE_SUGGESTIONS = [
+  "Which program has better earn rates?",
+  "Compare the tier systems",
+  "Which is best for frequent travelers?",
+];
+
+/** Chat bubbles + composer for grounded follow-up Q&A (single or comparison runs). */
 export function ConverseThread({
   runId,
   conversation,
   disabled,
+  compare = false,
+  suggestions,
+  placeholder,
 }: {
   runId: string;
   conversation: ConverseTurn[];
   disabled?: boolean;
+  /** When true, sends messages to the comparison-specific endpoint. */
+  compare?: boolean;
+  suggestions?: string[];
+  placeholder?: string;
 }) {
   const [message, setMessage] = useState("");
-  const converse = useConverse(runId);
+  const singleConverse = useConverse(runId);
+  const compareConverse = useCompareConverse(runId);
+  const converse = compare ? compareConverse : singleConverse;
+  const effectiveSuggestions = suggestions ?? (compare ? COMPARE_SUGGESTIONS : SINGLE_SUGGESTIONS);
+  const effectivePlaceholder = placeholder ?? (compare ? "Ask about the comparison…" : "Ask about this program…");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -69,7 +86,7 @@ export function ConverseThread({
 
       {!disabled && conversation.length <= 1 && (
         <div className="flex flex-wrap gap-1.5 px-4 pb-2">
-          {SUGGESTIONS.map((s) => (
+          {effectiveSuggestions.map((s) => (
             <button
               key={s}
               onClick={() => send(s)}
@@ -91,7 +108,7 @@ export function ConverseThread({
         <Input
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          placeholder={disabled ? "Run still processing…" : "Ask about this program…"}
+          placeholder={disabled ? "Run still processing…" : effectivePlaceholder}
           disabled={disabled || converse.isPending}
         />
         <Button type="submit" size="md" disabled={disabled || !message.trim()}>
@@ -125,12 +142,30 @@ function Bubble({ turn }: { turn: ConverseTurn }) {
       >
         <p className="leading-relaxed">{turn.message}</p>
         {turn.answer && (
-          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-line/60 pt-2">
-            <StatusBadge status={turn.answer.status} />
-            {turn.answer.cited_claim_ids.length > 0 && (
-              <span className="text-[10px] text-ink/45">
-                {turn.answer.cited_claim_ids.length} claim cited
-              </span>
+          <div className="mt-2 space-y-1.5 border-t border-line/60 pt-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={turn.answer.status} />
+              {turn.answer.cited_claim_ids.length > 0 && (
+                <span className="text-[10px] text-ink/45">
+                  {turn.answer.cited_claim_ids.length} claim{turn.answer.cited_claim_ids.length === 1 ? "" : "s"} cited
+                </span>
+              )}
+            </div>
+            {(turn.answer.source_urls ?? []).length > 0 && (
+              <div className="flex flex-col gap-0.5">
+                {(turn.answer.source_urls ?? []).map((url) => (
+                  <a
+                    key={url}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[10px] text-teal hover:underline truncate max-w-full"
+                  >
+                    <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                    {url}
+                  </a>
+                ))}
+              </div>
             )}
           </div>
         )}

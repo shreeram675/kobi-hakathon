@@ -21,7 +21,7 @@ export type RunMode = "single" | "compare" | "converse";
 
 export type ValidationStatus = "resolved" | "needs_clarification" | "rejected";
 
-export type ScrapeStatus = "success" | "failed";
+export type ScrapeStatus = "success" | "failed" | "forbidden";
 
 export type ExtractedFieldStatus = "EXTRACTED" | "NOT_FOUND" | "AMBIGUOUS";
 
@@ -128,12 +128,14 @@ export interface ScrapedUrlBlock {
   title: string | null;
   scrape_status: ScrapeStatus;
   error: string | null;
+  is_fallback: boolean;
 }
 
 export interface FirecrawlScrapeOutput {
   total_urls: number;
   successful_scrapes: number;
   failed_scrapes: number;
+  fallback_scrapes: number;
   blocks: ScrapedUrlBlock[];
 }
 
@@ -229,6 +231,10 @@ export interface ConflictRecord {
   score_gap: number; // >= 0
   resolution_status: ConflictResolution;
   judge_reason: string;
+  value_a?: string | null;
+  value_b?: string | null;
+  url_a?: string | null;
+  url_b?: string | null;
 }
 
 // ---- Adjudication / debate ----
@@ -254,6 +260,10 @@ export interface AdjudicatedClaim {
   decision: string;
   rounds: DebateRound[];
   confidence: number;
+  value_a?: string | null;
+  value_b?: string | null;
+  url_a?: string | null;
+  url_b?: string | null;
 }
 
 export interface HumanReviewItem {
@@ -299,11 +309,42 @@ export interface ComparisonOutput {
   items: ComparisonItem[];
 }
 
+export interface CategoryVerdict {
+  category: string;
+  label: string;
+  winner: string;
+  insight: string;
+}
+
+export interface KeyDifferentiator {
+  topic: string;
+  insight: string;
+  advantage: string;
+}
+
+export interface ProgramPersona {
+  program: string;
+  best_for: string;
+}
+
+export interface ComparisonBrief {
+  brief_id: string;
+  run_id: string;
+  programs: string[];
+  overall_winner: string | null;
+  executive_summary: string;
+  category_verdicts: CategoryVerdict[];
+  key_differentiators: KeyDifferentiator[];
+  personas: ProgramPersona[];
+  generated_at: string;
+}
+
 export interface ConverseAnswer {
   answer: string;
   status: ClaimStatus;
   cited_claim_ids: string[];
   missing_field_paths: string[];
+  source_urls?: string[];
 }
 
 export interface PipelineError {
@@ -366,6 +407,7 @@ export interface AgentState {
 
   final_brief: BriefOutput | null;
   comparison_output: ComparisonOutput | null;
+  comparison_brief: ComparisonBrief | null;
   conversation_answer: ConverseAnswer | null;
 
   errors: PipelineError[];
@@ -378,11 +420,32 @@ export interface AgentState {
   /** Whichever stage the pipeline is currently working. */
   active_stage: string | null;
   /** Coarse lifecycle of the whole run. */
-  status: "running" | "done" | "error" | "clarification_needed";
-  /** Conversation history for converse mode. */
+  status: "running" | "done" | "error" | "clarification_needed" | "cancelled";
+  /** Conversation history for single/converse mode (grounded in that run's data). */
   conversation?: ConverseTurn[];
+  /** Conversation history for comparison runs (grounded in comparison brief + all program data). */
+  comparison_conversation?: ConverseTurn[];
   /** compare mode: the second program's full state (UI-only convenience). */
   compare_b?: AgentState | null;
+  /** compare mode: full multi-program queue info (available for all comparison runs). */
+  comparison_run?: ComparisonRunInfo | null;
+  /** Live API cost ledger for the run. */
+  cost_report?: CostReport | null;
+}
+
+// ---- Multi-program comparison run tracking ----
+
+export type ProgramStatus = "pending" | "running" | "done" | "error";
+
+export interface ComparisonRunInfo {
+  programs: string[];
+  current_program_index: number;
+  total_programs: number;
+  program_statuses: ProgramStatus[];
+  /** Serialised AgentState for each completed program (null while pending/running). */
+  program_states: Array<AgentState | null>;
+  /** Per-program stage status snapshot (available once program completes). */
+  program_stage_statuses: Array<Record<string, StageStatus>>;
 }
 
 // ---- API payloads ----
@@ -390,8 +453,38 @@ export interface AgentState {
 export interface CreateRunBody {
   user_input: string;
   mode: RunMode;
-  /** compare mode: optional explicit second program prompt. */
+  /** compare mode: optional explicit second program prompt (legacy 2-program). */
   user_input_b?: string;
+  /** compare mode: explicit list of programs (supersedes user_input_b when provided). */
+  programs?: string[];
+  /** Skip cache lookup and always run the full pipeline. */
+  force_fresh?: boolean;
+}
+
+export interface CacheCheckResult {
+  found: boolean;
+  program_name?: string;
+  brand?: string;
+  country_or_region?: string | null;
+  run_date?: string;
+  run_datetime?: string;
+  run_timestamp?: string;
+  age_days?: number;
+}
+
+export interface CompareCacheCheckItem extends CacheCheckResult {
+  program: string;
+}
+
+export interface RunHistoryEntry {
+  run_id: string;
+  user_input: string;
+  mode: RunMode;
+  program_name?: string | null;
+  data_quality: number;
+  status: "running" | "done" | "error" | "clarification_needed" | "cancelled";
+  created_at: string;
+  source?: "db" | "live";
 }
 
 export interface CreateRunResponse {
@@ -403,10 +496,31 @@ export interface RunSummary {
   user_input: string;
   mode: RunMode;
   data_quality: number;
-  status: AgentState["status"];
+  status: "running" | "done" | "error" | "clarification_needed" | "cancelled";
   created_at: string;
 }
 
 export interface ConverseRequest {
   message: string;
+}
+
+// ---- Cost tracking ----
+
+export interface CostReportLine {
+  provider: string;
+  stage: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  usd_cost: number;
+}
+
+export interface CostReport {
+  lines: CostReportLine[];
+  total_calls: number;
+  total_prompt_tokens: number;
+  total_completion_tokens: number;
+  total_tokens: number;
+  total_usd_cost: number;
 }

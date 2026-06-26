@@ -104,6 +104,12 @@ STAGE_PROVIDERS: dict[str, ProviderConfig] = {
         api_key_env=("NARRATION_API_KEY", "GEMINI_API_KEY"),
         api_base_env=("NARRATION_API_BASE", "GEMINI_API_BASE"),
     ),
+    "comparison_brief": ProviderConfig(
+        "comparison_brief",
+        model="gemini-2.5-flash",
+        api_key_env=("NARRATION_API_KEY", "GEMINI_API_KEY"),
+        api_base_env=("NARRATION_API_BASE", "GEMINI_API_BASE"),
+    ),
     "converse": ProviderConfig(
         "converse",
         model="llama-3.3-70b-versatile",

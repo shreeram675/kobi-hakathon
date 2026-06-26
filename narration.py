@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 import requests
 
+import cost_tracker
 from providers import provider_for_stage
-from schemas import AgentState, BriefOutput, FieldReport, PipelineError, new_id, now_iso
+from schemas import AgentState, BriefOutput, FieldReport, PipelineError, SchemaCoverage, new_id, now_iso
 
 
 _SECTION_ORDER = [
@@ -100,18 +102,29 @@ def narrator_node(state: AgentState) -> dict:
         brief_text=brief_text,
         word_count=len(brief_text.split()),
     )
-    return {"final_brief": brief, "updated_at": now_iso()}
+
+    coverage = SchemaCoverage(
+        total_fields=len(field_report.entries) or SchemaCoverage.model_fields["total_fields"].default,
+        supported_fields=field_report.extracted_count,
+        manual_review_fields=field_report.ambiguous_count + field_report.flagged_count,
+        null_fields=field_report.not_found_count,
+        rejected_fields=0,
+    )
+    total = coverage.total_fields or 1
+    data_quality = round(
+        (coverage.supported_fields + coverage.manual_review_fields * 0.3) / total, 2
+    )
+
+    return {
+        "final_brief": brief,
+        "schema_coverage": coverage,
+        "data_quality": data_quality,
+        "updated_at": now_iso(),
+    }
 
 
 def _generate_brief(field_report: FieldReport, program_name: str, brand: str | None) -> str:
-    context_block = _build_context_block(field_report)
-    brand_suffix = f" ({brand})" if brand and brand != program_name else ""
-    prompt = _NARRATION_PROMPT.format(
-        program_name=program_name,
-        brand_suffix=brand_suffix,
-        context_block=context_block,
-    )
-    return _call_gemini(prompt)
+    return _build_template_brief(field_report, program_name, brand)
 
 
 def _build_context_block(field_report: FieldReport) -> str:
@@ -142,18 +155,67 @@ def _build_context_block(field_report: FieldReport) -> str:
     return "\n\n".join(parts) if parts else "(no extracted data)"
 
 
+def _build_template_brief(field_report: FieldReport, program_name: str, brand: str | None) -> str:
+    """Build a structured prose brief directly from extracted field data — no LLM call."""
+    by_section: dict[str, dict[str, str]] = {}
+    for entry in field_report.entries:
+        if entry.value is None or entry.status == "not_found":
+            continue
+        section = entry.field_path.split(".")[0]
+        field = entry.field_path.split(".", 1)[-1].replace("_", " ").title()
+        conf = entry.confidence or 0.0
+        flag = " *(verify)*" if entry.status in ("flagged", "ambiguous") else ""
+        by_section.setdefault(section, {})[field] = f"{entry.value}{flag}"
+
+    brand_suffix = f" ({brand})" if brand and brand != program_name else ""
+    paragraphs = [f"# {program_name}{brand_suffix} — Loyalty Intelligence Brief\n"]
+
+    section_intros = {
+        "program_basics": "**Program Overview.**",
+        "earn_mechanics": "**Earning.**",
+        "burn_mechanics": "**Redemption.**",
+        "tier_system": "**Tier Structure.**",
+        "partnerships": "**Partnerships.**",
+        "digital_experience": "**Digital Experience.**",
+        "member_sentiment": "**Member Sentiment.**",
+        "competitive_position": "**Competitive Position.**",
+    }
+
+    for section in _SECTION_ORDER:
+        fields = by_section.get(section)
+        if not fields:
+            continue
+        label = section_intros.get(section, f"**{section.replace('_',' ').title()}.**")
+        lines = [f"- {k}: {v}" for k, v in fields.items()]
+        paragraphs.append(f"{label}\n" + "\n".join(lines))
+
+    for section, fields in by_section.items():
+        if section not in _SECTION_ORDER:
+            label = f"**{section.replace('_',' ').title()}.**"
+            lines = [f"- {k}: {v}" for k, v in fields.items()]
+            paragraphs.append(f"{label}\n" + "\n".join(lines))
+
+    if len(paragraphs) == 1:
+        paragraphs.append("*No extracted data available for this program.*")
+
+    return "\n\n".join(paragraphs)
+
+
 def _call_gemini(prompt: str, max_retries: int = 2) -> str:
     provider = provider_for_stage("narration")
-    api_key = provider.api_key
-    if not api_key:
-        raise RuntimeError("Narration is not configured. Set NARRATION_API_KEY or GEMINI_API_KEY.")
+    raw = os.getenv("NARRATION_API_KEYS", "")
+    keys = [k.strip() for k in raw.split(",") if k.strip()] or ([provider.api_key] if provider.api_key else [])
+    if not keys:
+        raise RuntimeError("Narration is not configured. Set NARRATION_API_KEYS or NARRATION_API_KEY or GEMINI_API_KEY.")
 
     api_base = (provider.api_base or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
     model = provider.resolved_model or "gemini-2.5-flash"
     url = f"{api_base}/models/{model}:generateContent"
 
     last_error: Exception | None = None
-    for attempt in range(max_retries + 1):
+    key_idx = 0
+    for attempt in range((max_retries + 1) * len(keys)):
+        api_key = keys[key_idx % len(keys)]
         response = requests.post(
             url,
             headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
@@ -170,13 +232,23 @@ def _call_gemini(prompt: str, max_retries: int = 2) -> str:
         if response.status_code not in _TRANSIENT_STATUS_CODES:
             response.raise_for_status()
             payload = response.json()
+            usage = payload.get("usageMetadata", {})
+            ledger = cost_tracker.get_current_ledger()
+            if ledger:
+                ledger.record_gemini(
+                    "narration",
+                    int(usage.get("promptTokenCount") or 0),
+                    int(usage.get("candidatesTokenCount") or 0),
+                )
             return payload["candidates"][0]["content"]["parts"][0]["text"].strip()
 
         last_error = requests.HTTPError(
             f"Narration LLM returned {response.status_code}",
             response=response,
         )
-        if attempt < max_retries:
-            time.sleep(2**attempt)
+        if response.status_code == 429:
+            key_idx += 1
+        else:
+            time.sleep(2 ** min(attempt, 4))
 
     raise last_error or RuntimeError("Narration LLM request failed.")

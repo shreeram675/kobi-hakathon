@@ -79,6 +79,8 @@ def semantic_chunk(
                     source_url=document.url,
                     target_fields=target_fields,
                     source_type=source_type,
+                    query_id=document.query_id,
+                    chunk_index=chunk_index,
                 )
             )
             chunk_index += 1

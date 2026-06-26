@@ -186,7 +186,7 @@ export const PIPELINE_STAGES = [
   { id: "firecrawl_scraper", index: 4, label: "Scraping", short: "Scrape" },
   { id: "chunking", index: 5, label: "Chunking", short: "Chunk" },
   { id: "extraction", index: 6, label: "Extraction", short: "Extract" },
-  { id: "claims", index: 7, label: "Claims & Conflicts", short: "Claims" },
+  { id: "claims", index: 7, label: "Conflicts", short: "Conflicts" },
   { id: "adjudication", index: 8, label: "Adjudication / Debate", short: "Debate" },
   { id: "output", index: 9, label: "Output", short: "Output" },
 ] as const;

@@ -16,6 +16,7 @@ import re
 from collections import Counter
 from typing import Any
 
+import cost_tracker
 from providers import provider_for_stage
 
 
@@ -243,7 +244,7 @@ async def call_groq(prompt: str, temperature: float, max_tokens: int, *, use_cli
 
     global _GROQ_SEMAPHORE
     if _GROQ_SEMAPHORE is None:
-        _GROQ_SEMAPHORE = asyncio.Semaphore(3)
+        _GROQ_SEMAPHORE = asyncio.Semaphore(5)
 
     pool = _build_client_pool()
     pool_size = len(pool)
@@ -262,6 +263,10 @@ async def call_groq(prompt: str, temperature: float, max_tokens: int, *, use_cli
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
+                if response.usage:
+                    ledger = cost_tracker.get_current_ledger()
+                    if ledger:
+                        ledger.record_groq("debate", response.usage.prompt_tokens or 0, response.usage.completion_tokens or 0)
                 return (response.choices[0].message.content or "").strip()
             except Exception as exc:
                 msg = str(exc)

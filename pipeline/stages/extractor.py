@@ -18,6 +18,7 @@ from typing import Any, Protocol
 import requests
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+import cost_tracker
 from providers import provider_for_stage
 from schemas import ExtractedField, ExtractedObjectPacket, SemanticChunk
 
@@ -144,8 +145,11 @@ class _RoundRobinKeyPool:
 
     Keys are read from EXTRACTION_API_KEYS (comma-separated), falling back to
     EXTRACTION_API_KEY then GEMINI_API_KEY so a single-key setup is unchanged.
-    On a 429 the caller advances to the next key immediately instead of sleeping,
-    spreading TPM load across all configured keys.
+
+    Each concurrent request acquires a unique slot via acquire_slot() so it
+    starts from a different key than every other in-flight request, giving true
+    round-robin distribution without relying on 429 signals to drive rotation.
+    On 429, the request naturally moves to the next key in its rotation sequence.
     """
 
     def __init__(self) -> None:
@@ -169,12 +173,23 @@ class _RoundRobinKeyPool:
                 keys = [provider.api_key]
         return keys
 
+    def acquire_slot(self) -> int:
+        """Atomically reserve a unique starting index for one request (true round-robin)."""
+        with self._lock:
+            slot = self._index
+            self._index = (self._index + 1) % len(self._keys)
+            return slot
+
+    def key_at(self, index: int) -> str:
+        """Return the key at the given index (wraps around the pool)."""
+        return self._keys[index % len(self._keys)]
+
     def current(self) -> str:
         with self._lock:
             return self._keys[self._index % len(self._keys)]
 
     def advance(self) -> str:
-        """Move to next key and return it (call on 429)."""
+        """Move to next key and return it."""
         with self._lock:
             self._index = (self._index + 1) % len(self._keys)
             return self._keys[self._index]
@@ -213,23 +228,37 @@ class GeminiExtractionClient:
         self.retry_sleep_seconds = max(0, _env_int("EXTRACTION_RETRY_SLEEP_SECONDS", 2))
 
     def complete_text(self, prompt: str) -> str:
-        response = self._post_with_fallbacks(prompt)
+        # Acquire a unique slot so each concurrent request starts from a different
+        # key, giving true round-robin distribution across the pool.
+        slot = self._key_pool.acquire_slot()
+        response = self._post_with_fallbacks(prompt, slot=slot)
         payload = response.json()
+        usage = payload.get("usageMetadata", {})
+        ledger = cost_tracker.get_current_ledger()
+        if ledger:
+            ledger.record_gemini(
+                "extraction",
+                int(usage.get("promptTokenCount") or 0),
+                int(usage.get("candidatesTokenCount") or 0),
+            )
         candidates = payload.get("candidates") or []
         if not candidates:
             return ""
         parts = candidates[0].get("content", {}).get("parts", [])
         return "\n".join(part.get("text", "") for part in parts)
 
-    def _post_with_fallbacks(self, prompt: str) -> requests.Response:
+    def _post_with_fallbacks(self, prompt: str, *, slot: int = 0) -> requests.Response:
         last_error: requests.HTTPError | None = None
         num_keys = len(self._key_pool)
         for model_index, model in enumerate(self.models):
             # Each model gets (max_retries + 1) * num_keys attempts so every
-            # key is tried before giving up on the model.
+            # key is tried before giving up on the model.  The slot ensures
+            # concurrent requests start from different keys (true round-robin);
+            # subsequent attempts in the retry loop naturally rotate through the
+            # remaining keys without needing an explicit advance() call.
             total_attempts = (self.max_retries + 1) * num_keys
             for attempt in range(total_attempts):
-                api_key = self._key_pool.current()
+                api_key = self._key_pool.key_at(slot + attempt)
                 response = requests.post(
                     f"{self.api_base}/{model}:generateContent",
                     params={"key": api_key},
@@ -248,16 +277,15 @@ class GeminiExtractionClient:
                     self.model = model
                     return response
 
-                if response.status_code == 429:
-                    # Rate limited — rotate to next key immediately, no sleep.
-                    self._key_pool.advance()
-                else:
+                if response.status_code != 429:
+                    # Non-429 transient error: sleep before next attempt.
                     if attempt < total_attempts - 1:
                         time.sleep(self.retry_sleep_seconds * ((attempt % (self.max_retries + 1)) + 1))
+                # 429: next iteration automatically uses key_at(slot + attempt + 1).
 
                 last_error = requests.HTTPError(
                     f"Gemini extraction unavailable ({response.status_code}) "
-                    f"for model {model} (key index {attempt % num_keys}).",
+                    f"for model {model} (key index {(slot + attempt) % num_keys}).",
                     response=response,
                 )
             if model_index + 1 < len(self.models):
@@ -273,11 +301,16 @@ def extract_from_chunks(
     schema_config: SchemaConfig,
     *,
     client: ExtractionClient | None = None,
+    extraction_context: dict | None = None,
 ) -> list[ExtractedObjectPacket]:
     """Extract runtime-schema object packets from chunks using Gemini.
 
     Chunks are packed into multi-chunk batches so one Gemini call covers
     several evidence units instead of paying one call per chunk.
+
+    extraction_context carries program-level metadata (program_subtype, program_name,
+    brand, reference_year) used to build entity isolation and temporal constraint rules
+    that are prepended to every extraction prompt in this run.
     """
 
     if not chunks or not schema_config.object_types:
@@ -294,7 +327,7 @@ def extract_from_chunks(
     if concurrency == 1:
         for batch in batches:
             try:
-                packets.extend(_extract_batch(batch, schema_config, client))
+                packets.extend(_extract_batch(batch, schema_config, client, extraction_context=extraction_context))
             except Exception as exc:
                 failures.append(str(exc))
         if not packets and failures:
@@ -302,7 +335,10 @@ def extract_from_chunks(
         return packets
 
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        futures = [executor.submit(_extract_batch, batch, schema_config, client) for batch in batches]
+        futures = [
+            executor.submit(_extract_batch, batch, schema_config, client, extraction_context)
+            for batch in batches
+        ]
         for future in as_completed(futures):
             try:
                 packets.extend(future.result())
@@ -464,42 +500,136 @@ def _extract_batch(
     batch: list[SemanticChunk],
     schema_config: SchemaConfig,
     client: ExtractionClient,
+    extraction_context: dict | None = None,
 ) -> list[ExtractedObjectPacket]:
+    # Identify candidate fields for priority hints but always pass the full
+    # schema so every one of the 31 required fields is considered for every
+    # batch — narrowing risks missing fields whose keywords are atypical.
     candidate_fields = sorted(
         {field for chunk in batch for field in select_candidate_fields(chunk, schema_config)}
     )
-    extraction_schema = narrow_schema_config(schema_config, candidate_fields)
-    if not extraction_schema.object_types:
+    if not schema_config.object_types:
         return []
 
-    prompt = build_extraction_prompt(batch, extraction_schema)
+    prompt = build_extraction_prompt(
+        batch,
+        schema_config,
+        extraction_context=extraction_context,
+        priority_fields=candidate_fields,
+    )
     for _attempt in range(2):
         try:
             raw = client.complete_text(prompt)
         except requests.RequestException:
             raise
         try:
-            parsed = parse_extraction_response(raw, batch, extraction_schema)
-            return [fill_missing_fields(packet, extraction_schema) for packet in parsed]
+            parsed = parse_extraction_response(raw, batch, schema_config)
+            return [fill_missing_fields(packet, schema_config) for packet in parsed]
         except Exception:
             continue
     return []
 
 
-def build_extraction_prompt(chunks: list[SemanticChunk], schema_config: SchemaConfig) -> str:
+def _build_extraction_context_preamble(context: dict) -> str:
+    """Build a constraint block prepended to every extraction prompt for this run."""
+    lines: list[str] = []
+
+    program_name = context.get("program_name")
+    brand = context.get("brand")
+    program_subtype = context.get("program_subtype")
+    reference_year = context.get("reference_year")
+
+    if program_name or brand:
+        parts = [p for p in [program_name, f"({brand})" if brand and brand != program_name else None] if p]
+        lines.append(f"TARGET PROGRAM: {' '.join(parts)}")
+
+    if program_subtype == "B2B":
+        lines += [
+            "PROGRAM SUBTYPE: CORPORATE / B2B",
+            "",
+            "ENTITY ISOLATION — CORPORATE PROGRAM:",
+            "This program is held and operated at a COMPANY level, not by an individual traveler.",
+            "Apply the following strict rules to every field in every chunk:",
+            "- REJECT individual consumer status tier names (e.g. Silver, Gold, Platinum, Diamond,",
+            "  Medallion, Premier, Executive). These belong to the consumer variant of the program.",
+            "- REJECT individual earn rates derived from personal credit card or co-brand card spend.",
+            "- REJECT individual consumer mobile app features (boarding passes, seat selection,",
+            "  personal trip maps, personal upgrade certificates). Extract only corporate account",
+            "  management tools, bulk booking portals, and administrator dashboards.",
+            "- REJECT point or mile transfer mechanics that move currency to an individual's",
+            "  hotel, airline, or retail account. Extract only company-level earn/burn.",
+            "- ACCEPT company spend thresholds, unique employee traveler counts, and corporate",
+            "  account qualification criteria.",
+            "- If a chunk mixes consumer and corporate content, extract ONLY the corporate portion.",
+            "  Mark any field where consumer and corporate data appear together as AMBIGUOUS.",
+        ]
+    elif program_subtype == "B2C":
+        lines += [
+            "PROGRAM SUBTYPE: CONSUMER / B2C",
+            "",
+            "ENTITY ISOLATION — CONSUMER PROGRAM:",
+            "- REJECT corporate enrollment requirements, company spend thresholds, or B2B account",
+            "  management features. Extract only individual member attributes.",
+        ]
+
+    if reference_year:
+        lines += [
+            "",
+            f"TEMPORAL CONTEXT: Current reference year is {reference_year}.",
+            "Apply the following rules to time-sensitive values:",
+            "- If a chunk contains a forward-looking statement about a year that has already passed",
+            f"  (e.g. 'will launch in 2022' when the reference year is {reference_year}), mark that",
+            "  field AMBIGUOUS — do not treat it as a current fact.",
+            "- Prefer evidence accompanied by an explicit date. When a numeric value (earn rate,",
+            "  threshold, point value, tier name) appears only in content that is visibly dated",
+            f"  more than two years before {reference_year}, reduce confidence to <= 0.5.",
+            "- Do NOT extrapolate or infer what the current value might be from an old source.",
+        ]
+
+    priority_fields: list[str] = context.get("priority_fields") or []
+    if priority_fields:
+        lines += [
+            "",
+            "PROGRAM PRIORITY FIELDS (ranked by schema importance for this program type):",
+            ", ".join(priority_fields),
+            "Allocate extra attention to extracting these fields. Mark a priority field as NOT_FOUND"
+            " only after exhausting all evidence in the chunk.",
+        ]
+
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n\n"
+
+
+def build_extraction_prompt(
+    chunks: list[SemanticChunk],
+    schema_config: SchemaConfig,
+    extraction_context: dict | None = None,
+    *,
+    priority_fields: list[str] | None = None,
+) -> str:
+    context_preamble = _build_extraction_context_preamble(extraction_context) if extraction_context else ""
     schema_json = json.dumps(schema_config.model_dump(), ensure_ascii=True, indent=2)
+    priority_hint = (
+        f"\nPriority fields (keyword signals detected in this batch — other schema fields may also apply):\n"
+        f"{', '.join(priority_fields)}\n"
+        if priority_fields
+        else ""
+    )
     chunk_blocks = "\n\n".join(
         f"CHUNK {index + 1}\n"
         f"chunk_id: {chunk.chunk_id}\n"
         f"source_url: {chunk.source_url}\n"
-        f"priority target fields: {', '.join(chunk.target_fields) if chunk.target_fields else 'all fields in the runtime schema'}\n"
+        + (f"query_id: {chunk.query_id}\n" if chunk.query_id else "")
+        + (f"chunk_index: {chunk.chunk_index}\n" if chunk.chunk_index is not None else "")
+        + f"priority target fields: {', '.join(chunk.target_fields) if chunk.target_fields else 'all fields in the runtime schema'}\n"
         f'chunk_text:\n"""{chunk.chunk_text}"""'
         for index, chunk in enumerate(chunks)
     )
     return f"""
 You are a strict structured extraction engine.
 
-Use ONLY the chunk texts provided below. Do not use training knowledge. Do not
+{context_preamble}Use ONLY the chunk texts provided below. Do not use training knowledge. Do not
 guess or fill missing values. You may derive a value only when the chunk itself
 contains enough evidence to support that derivation, and the field must still
 include an exact supporting source_snippet copied from that chunk.
@@ -508,8 +638,9 @@ Each CHUNK below is an independent evidence unit identified by chunk_id. Never
 combine evidence across chunks; every extracted field must be supported by the
 single chunk named in its object's chunk_id.
 
-Runtime schema:
+Runtime schema (all fields must be considered for every chunk):
 {schema_json}
+{priority_hint}
 
 Return JSON only in this exact shape:
 {{
@@ -664,19 +795,31 @@ def _parse_field(field_data: dict[str, Any], chunk: SemanticChunk) -> ExtractedF
             or not snippet.strip()
             or not _snippet_in_text(snippet, chunk.chunk_text)
         ):
+            # Snippet missing or not verbatim in chunk — cannot verify, discard value.
             return ExtractedField(
                 value=None,
                 status="AMBIGUOUS",
                 source_url=chunk.source_url,
                 source_snippet=None,
-                confidence=0.0,
+                confidence=None,
+            )
+        confidence = _coerce_confidence(field_data.get("confidence"))
+        min_confidence = _env_float("EXTRACTION_MIN_CONFIDENCE", 0.5)
+        if confidence is not None and confidence < min_confidence:
+            # Confidence below threshold — keep the snippet for audit but discard value.
+            return ExtractedField(
+                value=None,
+                status="AMBIGUOUS",
+                source_url=chunk.source_url,
+                source_snippet=snippet,
+                confidence=confidence,
             )
         return ExtractedField(
             value=field_data.get("value"),
             status="EXTRACTED",
             source_url=chunk.source_url,
             source_snippet=snippet,
-            confidence=_coerce_confidence(field_data.get("confidence")),
+            confidence=confidence,
         )
 
     return ExtractedField(
@@ -698,11 +841,11 @@ def _normalize_for_match(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().casefold()
 
 
-def _coerce_confidence(value: Any) -> float:
+def _coerce_confidence(value: Any) -> float | None:
     try:
         return max(0.0, min(1.0, float(value)))
     except (TypeError, ValueError):
-        return 0.0
+        return None
 
 
 def _extract_json_block(text: str) -> str:
@@ -807,5 +950,12 @@ def _semantic_keywords_for_field(field_name: str) -> set[str]:
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
     except ValueError:
         return default

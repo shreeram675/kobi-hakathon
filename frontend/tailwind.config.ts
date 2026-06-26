@@ -10,18 +10,20 @@ const config: Config = {
     extend: {
       colors: {
         ink: "#17202a",
-        navy: "#17324d",
-        teal: "#0f7c7d",
+        navy: "#0d1b2a",
+        teal: "#F47920",
         green: "#16704a",
         amber: "#a66100",
         red: "#b83232",
-        blue: "#1f65b7",
+        blue: "#1a3a5c",
         "soft-green": "#e8f6ef",
         "soft-amber": "#fff2d8",
         "soft-red": "#fde8e8",
         "soft-grey": "#eef2f6",
         paper: "#f6f8fb",
         line: "#d9e2ec",
+        "kobie-orange": "#F47920",
+        "kobie-navy": "#0d1b2a",
       },
       fontFamily: {
         sans: [

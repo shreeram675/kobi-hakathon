@@ -123,6 +123,11 @@ class KobieModel(BaseModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True)
 
 
+class SearchContext(KobieModel):
+    program_type: str | None = None
+    entity_disambiguation: str | None = None
+
+
 class ProgramIdentity(KobieModel):
     identity_id: str = Field(default_factory=lambda: new_id("identity"))
     raw_input: str
@@ -130,14 +135,19 @@ class ProgramIdentity(KobieModel):
     brand: str
     domain: str
     country_or_region: str | None = None
+    program_subtype: str | None = None
     confidence: float = Field(ge=0, le=1)
     status: Literal["resolved"] = "resolved"
+    official_domain: str | None = None
+    noise_exclude_terms: list[str] = Field(default_factory=list)
+    search_context: SearchContext | None = None
 
 
 class ClarificationOption(KobieModel):
     program_name: str
     brand: str
     domain: str
+    official_domain: str | None = None
 
 
 class ValidationResult(KobieModel):
@@ -147,6 +157,7 @@ class ValidationResult(KobieModel):
     possible_matches: list[ClarificationOption] = Field(default_factory=list)
     follow_up_questions: list[str] = Field(default_factory=list, max_length=3)
     reason: str | None = None
+    missing_info: str | None = None
 
     @model_validator(mode="after")
     def resolved_requires_identity(self) -> "ValidationResult":
@@ -201,7 +212,8 @@ class ScrapedUrlBlock(KobieModel):
     canonical_url: str
     content: str | None = None
     title: str | None = None
-    scrape_status: Literal["success", "failed"] = "success"
+    published_date: str | None = None
+    scrape_status: Literal["success", "failed", "forbidden"] = "success"
     error: str | None = None
 
 
@@ -235,6 +247,10 @@ class SemanticChunk(KobieModel):
     source_url: str
     target_fields: list[str] = Field(default_factory=list)
     source_type: str | None = None
+    # Traceability: which search query produced the document this chunk came from,
+    # and the ordinal position of this chunk within that document.
+    query_id: str | None = None
+    chunk_index: int | None = None
 
 
 class ExtractedField(KobieModel):
@@ -381,11 +397,42 @@ class ComparisonOutput(KobieModel):
     items: list[ComparisonItem] = Field(default_factory=list)
 
 
+class CategoryVerdict(KobieModel):
+    category: str
+    label: str
+    winner: str  # program name or "Tie" or "Insufficient data"
+    insight: str
+
+
+class KeyDifferentiator(KobieModel):
+    topic: str
+    insight: str
+    advantage: str  # program name that wins here
+
+
+class ProgramPersona(KobieModel):
+    program: str
+    best_for: str
+
+
+class ComparisonBrief(KobieModel):
+    brief_id: str = Field(default_factory=lambda: new_id("compbrief"))
+    run_id: str
+    programs: list[str]
+    overall_winner: str | None = None
+    executive_summary: str
+    category_verdicts: list[CategoryVerdict] = Field(default_factory=list)
+    key_differentiators: list[KeyDifferentiator] = Field(default_factory=list)
+    personas: list[ProgramPersona] = Field(default_factory=list)
+    generated_at: str = Field(default_factory=now_iso)
+
+
 class ConverseAnswer(KobieModel):
     answer: str
     status: ClaimStatus
     cited_claim_ids: list[str] = Field(default_factory=list)
     missing_field_paths: list[str] = Field(default_factory=list)
+    source_urls: list[str] = Field(default_factory=list)
 
 
 class PipelineError(KobieModel):
@@ -405,12 +452,14 @@ class AgentState(TypedDict):
     brand: str | None
     domain: str | None
     country_or_region: str | None
+    program_subtype: NotRequired[str | None]
     query_generation_result: QueryGenerationOutput | None
     search_queries: list[SearchQuery]
     retrieval_result: RetrievalOutput | None
     retrieved_urls: list[RetrievedUrl]
     firecrawl_result: FirecrawlScrapeOutput | None
     scraped_blocks: list[ScrapedUrlBlock]
+    additional_blocks: NotRequired[list[ScrapedUrlBlock]]
     raw_documents: NotRequired[list[RawDocument]]
     semantic_chunks: NotRequired[list[SemanticChunk]]
     extraction_chunks: NotRequired[list[SemanticChunk]]
@@ -418,6 +467,7 @@ class AgentState(TypedDict):
     schema_config: NotRequired[dict[str, Any] | None]
     extracted_packets: NotRequired[list[ExtractedObjectPacket]]
     normalized_packets: NotRequired[list[NormalizedObjectPacket]]
+    prefetched_app_ratings: NotRequired[NormalizedObjectPacket | None]
     field_report: NotRequired[FieldReport | None]
     retrieved_pages: list[PageRef]
     sanitized_chunks: list[ChunkRef]
@@ -430,6 +480,7 @@ class AgentState(TypedDict):
     data_quality: float
     final_brief: BriefOutput | None
     comparison_output: ComparisonOutput | None
+    comparison_brief: ComparisonBrief | None
     conversation_answer: ConverseAnswer | None
     errors: list[PipelineError]
     created_at: str
@@ -449,6 +500,7 @@ def build_initial_state(user_input: str, mode: RunMode = RunMode.SINGLE) -> Agen
         "brand": None,
         "domain": None,
         "country_or_region": None,
+        "program_subtype": None,
         "query_generation_result": None,
         "search_queries": [],
         "retrieval_result": None,
@@ -474,6 +526,7 @@ def build_initial_state(user_input: str, mode: RunMode = RunMode.SINGLE) -> Agen
         "data_quality": 0.0,
         "final_brief": None,
         "comparison_output": None,
+        "comparison_brief": None,
         "conversation_answer": None,
         "errors": [],
         "created_at": timestamp,

@@ -8,114 +8,145 @@ from typing import Any, Protocol
 
 import requests
 
+import cost_tracker
 from providers import provider_for_stage
-from schemas import ClarificationOption, ProgramIdentity, ValidationResult
+from schemas import ClarificationOption, ProgramIdentity, SearchContext, ValidationResult
 
 
 INPUT_VERIFIER_SYSTEM_PROMPT = """
-You are a Loyalty Program Discovery and Validation Agent.
+You are the Input Validation Agent for Kobie — a professional loyalty program
+intelligence platform used by loyalty consultants, program managers, and strategy
+teams.
 
-Your job is to identify the exact loyalty program the user wants to research
-before any information retrieval or data extraction begins.
+Your sole job is to identify the exact loyalty program the user wants to research
+and return it as a structured identity. Do this as quickly as possible with no
+unnecessary back-and-forth.
 
-OBJECTIVE
-Transform user input into a single canonical loyalty program identity that can
-be safely passed to downstream systems.
+═══════════════════════════════════════════════════════
+RESOLUTION APPROACH
+═══════════════════════════════════════════════════════
 
-DOMAIN RULES
-The "domain" field is universal and may be any concise industry or program
-category, such as Airline, Hotel, Retail, Banking/Credit Card, Coalition,
-Telecom, Fuel, E-commerce, Gaming, Transport, Food Delivery, Healthcare,
-Entertainment, Education, Mobility, or Other.
+Always search the web dynamically to identify the loyalty program. Do not rely
+on hardcoded mappings or static knowledge. For every input:
 
-Use the most specific natural domain that helps downstream retrieval. Do not
-force every program into a fixed category list.
+  1. Search for real loyalty programs matching the input
+  2. Evaluate results for confidence
+  3. Decide: resolve, clarify, or reject
 
-TASKS
-1. Determine whether the user's input refers to a loyalty program, company or
-   brand, product or service, or ambiguous term.
-2. Resolve the input to a single loyalty program whenever possible.
-3. Detect the most likely loyalty program domain or industry category.
-4. Estimate confidence in the resolution.
-5. If confidence is below 0.90, ask follow-up questions.
-6. Continue asking clarifying questions until a single program can be identified
-   with high confidence, or the user explicitly chooses from available options.
+═══════════════════════════════════════════════════════
+DECISION PRIORITY ORDER
+═══════════════════════════════════════════════════════
 
+STEP 1 — RESOLVE DIRECTLY (confidence ≥ 0.90)
+If web search returns a single clear loyalty program match, return "resolved"
+immediately. Do not ask questions.
+
+STEP 2 — SHOW POSSIBLE MATCHES (before asking any question)
+If search returns 2–5 real programs that could match, return "needs_clarification"
+with a populated "possible_matches" list. Add a follow_up_question only if it
+meaningfully narrows the list.
+
+STEP 3 — ASK A QUESTION (last resort)
+Only when matches exceed 5 or no clear match exists and one targeted question
+would narrow it significantly.
+
+  - Ask targeted clarification questions with clear options where possible
+  - Do not repeat or rephrase the same question
+  - Maximum 3 follow-up questions across the entire conversation
+  - After 3 failed attempts, reject gracefully with a clear explanation of
+    what information is needed (company name, region, official website, etc.)
+
+═══════════════════════════════════════════════════════
 ANTI-HALLUCINATION RULES
-- Never invent a loyalty program, brand, company, or domain.
-- Only return "resolved" for a real, known loyalty/rewards/membership program.
-- Only include "possible_matches" for real, known programs.
-- If the input appears fictional, nonsensical, political, unrelated, or no real
-  loyalty program is known, return "rejected".
-- Do not create names by adding words like Rewards, Loyalty, Club, Points, Plus,
-  or Membership to the user's text.
-- User confirmation cannot make a fictional or unknown program real.
+═══════════════════════════════════════════════════════
+- Never invent a loyalty program, brand, company, or domain
+- Only return "resolved" for a real, confirmed loyalty program found via search
+- Do not fabricate programs by appending Rewards, Club, Points, Plus to input
+- If input is fictional, nonsensical, or unrelated to loyalty, return "rejected"
+- User confirmation cannot make a fictional or unverified program real
+- Always prioritize accuracy over assumptions
 
-AMBIGUITY HANDLING
-Examples:
-Air India -> Air India Maharaja Club
-Flying Returns -> Air India Maharaja Club
-Bonvoy -> Marriott Bonvoy
-Executive Club -> British Airways Executive Club
-Hilton -> Hilton Honors
+═══════════════════════════════════════════════════════
+DOMAIN FIELD
+═══════════════════════════════════════════════════════
+Use one of: Airline, Hotel, Retail, Banking/Credit Card, Coalition, Telecom,
+Fuel, E-commerce, Food & Beverage, Food Delivery, Healthcare, Entertainment,
+Education, Mobility, Fintech, Supermarket, Other.
 
-If multiple valid interpretations exist, do not assume. Ask concise follow-up
-questions.
+═══════════════════════════════════════════════════════
+OUTPUT FORMAT — valid JSON only, no Markdown fences
+═══════════════════════════════════════════════════════
 
-QUESTION RULES
-- Ask the minimum number of questions possible.
-- Maximum 3 follow-up questions.
-- Prefer multiple-choice questions.
-- Prioritize identifying program type/domain, brand/company, then exact loyalty
-  program.
-- Never ask unnecessary questions if confidence is already high.
-- Do not repeat semantically equivalent questions.
-- After three user clarifications, either resolve the single best remaining
-  real possible match or ask the user to choose from a numbered list. Do not ask
-  new open-ended questions. If no real program is known, return rejected.
-
-CONFIDENCE RULES
-Confidence >= 0.90: return resolved output immediately.
-Confidence < 0.90: ask clarification questions.
-
-OUTPUT FORMAT
-Return only valid JSON. Do not wrap it in Markdown.
-
-If resolved:
+Resolved:
 {
   "status": "resolved",
-  "program_name": "...",
-  "brand": "...",
-  "domain": "...",
-  "country_or_region": "...",
-  "confidence": 0.95
+  "program_name": "Dunkin' Rewards",
+  "brand": "Dunkin'",
+  "domain": "Food & Beverage",
+  "country_or_region": "United States",
+  "confidence": 0.97,
+  "official_domain": "dunkinrewards.com",
+  "noise_exclude_terms": [],
+  "search_context": {
+    "program_type": "points-based",
+    "entity_disambiguation": "consumer loyalty app, not Dunkin Donuts franchise operations"
+  }
 }
 
-If clarification is required:
+Needs clarification:
 {
   "status": "needs_clarification",
   "possible_matches": [
     {
-      "program_name": "...",
-      "brand": "...",
-      "domain": "..."
+      "program_name": "United MileagePlus",
+      "brand": "United Airlines",
+      "domain": "Airline",
+      "official_domain": "mileageplus.com"
+    },
+    {
+      "program_name": "United Supermarkets MyMixx",
+      "brand": "United Supermarkets",
+      "domain": "Supermarket",
+      "official_domain": "unitedtexas.com"
     }
   ],
-  "follow_up_questions": [
-    "..."
-  ],
-  "confidence": 0.72
+  "follow_up_questions": ["Are you looking for an airline or grocery program?"],
+  "confidence": 0.60
 }
 
-If no real loyalty program exists or can be identified:
+Rejected:
 {
   "status": "rejected",
   "confidence": 0,
-  "reason": "No known loyalty program exists for this input."
+  "reason": "Could not identify a real loyalty program from the input provided.",
+  "missing_info": "Please provide the company name, region, or official website to help identify the program."
 }
 
-Your goal is to produce a single, unambiguous loyalty program identity with the
-fewest possible interactions while maintaining high accuracy.
+═══════════════════════════════════════════════════════
+OUTPUT FIELDS
+═══════════════════════════════════════════════════════
+
+official_domain (string)
+  The program's primary web domain for T&C and FAQ pages.
+  Found via search — never guessed. Use null if not found.
+
+noise_exclude_terms (array of strings)
+  Keywords to add as negatives in Tavily queries to strip irrelevant results.
+  Populate based on what the search reveals about the brand's other business
+  lines, subsidiaries, or corporate entities that share the same name.
+  Leave empty [] if no noise risk detected.
+
+search_context.program_type (string)
+  One of: "points-based", "miles-based", "cashback", "subscription",
+  "tiered-benefits", "coalition"
+
+search_context.entity_disambiguation (string)
+  One sentence describing what this program IS and what it is NOT.
+  Critical for conglomerates or brands where corporate and consumer entities
+  share a name. Derived from search results — not assumed.
+
+program_subtype (optional)
+  Set to "B2B" only for corporate-facing programs. Omit otherwise.
 """.strip()
 
 
@@ -162,6 +193,10 @@ class OpenAICompatibleChatClient:
         )
         response.raise_for_status()
         payload = response.json()
+        usage = payload.get("usage", {})
+        ledger = cost_tracker.get_current_ledger()
+        if ledger and (usage.get("prompt_tokens") or usage.get("completion_tokens")):
+            ledger.record_gemini("validation", int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0))
         content = payload["choices"][0]["message"]["content"]
         return parse_json_content(content)
 
@@ -204,14 +239,10 @@ def validate_conversation(messages: list[dict[str, str]], chat_client: ChatClien
             reason=str(exc),
         )
 
-    return _parse_verifier_output(user_input=" | ".join(user_messages), payload=raw_result, messages=messages)
+    return _parse_verifier_output(user_input=" | ".join(user_messages), payload=raw_result)
 
 
-def _parse_verifier_output(
-    user_input: str,
-    payload: dict[str, Any],
-    messages: list[dict[str, str]] | None = None,
-) -> ValidationResult:
+def _parse_verifier_output(user_input: str, payload: dict[str, Any]) -> ValidationResult:
     status = payload.get("status")
     confidence = float(payload.get("confidence", 0))
 
@@ -219,15 +250,23 @@ def _parse_verifier_output(
         return ValidationResult(
             status="rejected",
             confidence=0,
-            reason=str(payload.get("reason") or "No known loyalty program exists for this input."),
+            reason=str(payload.get("reason") or "Could not identify a real loyalty program from the input provided."),
+            missing_info=payload.get("missing_info") or None,
         )
 
     if status == "resolved" and confidence >= 0.90:
-        if _looks_like_synthetic_program_name(user_input, payload):
+        if _looks_like_unknown_or_fictional_input(user_input) and _looks_like_synthetic_program_name(user_input, payload):
             return ValidationResult(
                 status="rejected",
                 confidence=0,
-                reason="No known loyalty program exists for this input.",
+                reason="Could not identify a real loyalty program from the input provided.",
+            )
+        raw_sc = payload.get("search_context")
+        search_context = None
+        if isinstance(raw_sc, dict):
+            search_context = SearchContext(
+                program_type=raw_sc.get("program_type"),
+                entity_disambiguation=raw_sc.get("entity_disambiguation"),
             )
         identity = ProgramIdentity(
             raw_input=user_input,
@@ -235,7 +274,11 @@ def _parse_verifier_output(
             brand=str(payload.get("brand") or payload["program_name"]),
             domain=normalize_domain(payload.get("domain")),
             country_or_region=payload.get("country_or_region"),
+            program_subtype=_parse_program_subtype(payload.get("program_subtype"), str(payload["program_name"])),
             confidence=confidence,
+            official_domain=payload.get("official_domain") or None,
+            noise_exclude_terms=[str(t) for t in (payload.get("noise_exclude_terms") or [])],
+            search_context=search_context,
         )
         return ValidationResult(status="resolved", confidence=confidence, identity=identity)
 
@@ -244,6 +287,7 @@ def _parse_verifier_output(
             program_name=str(match["program_name"]),
             brand=str(match.get("brand") or match["program_name"]),
             domain=normalize_domain(match.get("domain")),
+            official_domain=match.get("official_domain") or None,
         )
         for match in payload.get("possible_matches", [])
         if isinstance(match, dict)
@@ -268,6 +312,34 @@ def _parse_verifier_output(
         follow_up_questions=follow_ups,
         reason="Input verifier confidence is below 0.90.",
     )
+
+
+def _parse_program_subtype(llm_value: object, program_name: str) -> str | None:
+    """Detect B2B vs B2C from LLM output, with a deterministic keyword fallback."""
+    raw = str(llm_value or "").strip().upper()
+    if raw in {"B2B", "CORPORATE", "BUSINESS"}:
+        return "B2B"
+    if raw in {"B2C", "CONSUMER", "PERSONAL", "INDIVIDUAL"}:
+        return "B2C"
+    # Deterministic fallback: common B2B signals in program names across any domain.
+    # The LLM is the primary detector; this handles cases where the LLM omits program_subtype.
+    name_lower = program_name.lower()
+    b2b_signals = (
+        "for business",
+        "corporate",
+        " b2b",
+        "business extra",
+        "business rewards",
+        "perksplus",
+        " sme ",
+        "enterprise program",
+    )
+    if any(signal in name_lower for signal in b2b_signals):
+        return "B2B"
+    # Programs whose name ends with the bare word "business" (e.g. "AAdvantage Business")
+    if name_lower.rstrip().endswith(" business"):
+        return "B2B"
+    return None
 
 
 def normalize_domain(value: object) -> str:
