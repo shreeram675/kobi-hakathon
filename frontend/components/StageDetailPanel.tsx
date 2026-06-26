@@ -87,7 +87,7 @@ export function StageDetailPanel({
                   }
                   dot
                 >
-                  {state.validation_result.status.replace(/_/g, " ")}
+                  {state.validation_result.status?.replace(/_/g, " ")}
                 </Badge>
                 {state.program_identity && (
                   <span className="text-sm font-semibold text-navy">

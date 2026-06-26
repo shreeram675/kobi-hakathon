@@ -6,8 +6,18 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { createRun, fetchRun, fetchRuns, postCompareConverse, postConverse, postClarify, stopRun } from "./api";
+import {
+  createRun,
+  fetchRun,
+  fetchRunHistory,
+  fetchRuns,
+  postCompareConverse,
+  postConverse,
+  postClarify,
+  stopRun,
+} from "./api";
 import type { CreateRunBody } from "./types";
+import { upsertRecentSearch } from "./cache-storage";
 
 const TERMINAL_STATUSES = new Set(["done", "error", "cancelled"]);
 
@@ -42,13 +52,33 @@ export function useRuns() {
   });
 }
 
+/** Server-persisted run history (SQLite + live). Survives server restarts. */
+export function useRunHistory() {
+  return useQuery({
+    queryKey: ["run-history"],
+    queryFn: fetchRunHistory,
+    refetchInterval: 5000,
+    retry: 1,
+    staleTime: 2000,
+  });
+}
+
 export function useCreateRun() {
   const router = useRouter();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateRunBody) => createRun(body),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
+      upsertRecentSearch({
+        run_id: data.run_id,
+        user_input: variables.user_input,
+        mode: variables.mode,
+        programs: variables.programs,
+        created_at: new Date().toISOString(),
+        status: "running",
+      });
       qc.invalidateQueries({ queryKey: ["runs"] });
+      qc.invalidateQueries({ queryKey: ["run-history"] });
       router.push(`/run/${data.run_id}`);
     },
   });

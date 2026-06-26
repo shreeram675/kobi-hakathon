@@ -10,9 +10,12 @@ from langgraph.graph import END, START, StateGraph
 
 from firecrawl_scraper import scrape_retrieved_urls
 from pipeline.nodes.ingest_node import ingest_node as post_firecrawl_ingest_node
+from pipeline.stages.app_ratings_fetcher import build_app_ratings_packet, fetch_app_ratings
+from pipeline.stages.direct_url_seeder import seed_urls
+from pipeline.stages.wikipedia_fetcher import build_wikipedia_block, fetch_wikipedia_summary
 from query_generator import generate_queries
 from retrieval import retrieve_urls
-from schemas import AgentState, FirecrawlScrapeOutput, PipelineError, build_initial_state, new_id, now_iso
+from schemas import AgentState, FirecrawlScrapeOutput, NormalizedObjectPacket, ScrapedUrlBlock, PipelineError, build_initial_state, new_id, now_iso
 from validation import validate_conversation
 
 
@@ -84,6 +87,94 @@ def query_generator_node(state: AgentState) -> dict:
         "search_queries": query_generation_result.queries,
         "updated_at": now_iso(),
     }
+
+
+def app_ratings_node(state: AgentState) -> dict:
+    program_name = state.get("program_name") or ""
+    brand = state.get("brand") or program_name
+    country = (state.get("country_or_region") or "us").lower()
+    if country in {"india", "in"}:
+        country = "in"
+    else:
+        country = "us"
+
+    try:
+        result = fetch_app_ratings(program_name, brand, country=country)
+        raw = build_app_ratings_packet(result, program_name)
+        packet = NormalizedObjectPacket.model_validate(raw) if raw else None
+    except Exception as exc:
+        return {
+            "prefetched_app_ratings": None,
+            "errors": [*state["errors"], PipelineError(stage="app_ratings", message=str(exc))],
+            "updated_at": now_iso(),
+        }
+
+    return {"prefetched_app_ratings": packet, "updated_at": now_iso()}
+
+
+def web_enrichment_node(state: AgentState) -> dict:
+    """Inject directly-known URLs and Wikipedia text without spending Tavily budget.
+
+    Runs after retrieval so it can append seeded URLs to retrieved_urls before
+    Firecrawl picks them up. Wikipedia extract goes into additional_blocks so
+    ingest_node processes it alongside Firecrawl output.
+    """
+    program_name = state.get("program_name") or ""
+    brand = state.get("brand") or program_name
+    identity = state.get("program_identity")
+    official_domain = identity.official_domain if identity else None
+
+    # --- direct URL seeding --------------------------------------------------
+    app_ratings = state.get("prefetched_app_ratings")
+    app_store_url: str | None = None
+    play_store_url: str | None = None
+    if app_ratings:
+        for field_name, field_val in app_ratings.fields.items():
+            if field_name == "app_store_rating" and field_val.source_url:
+                app_store_url = field_val.source_url
+            elif field_name == "play_store_rating" and field_val.source_url:
+                play_store_url = field_val.source_url
+
+    try:
+        seeded = seed_urls(
+            brand=brand,
+            program_name=program_name,
+            official_domain=official_domain,
+            app_store_url=app_store_url,
+            play_store_url=play_store_url,
+        )
+    except Exception as exc:
+        seeded = []
+        _log_enrichment_error("url_seeder", exc)
+
+    existing_urls = state.get("retrieved_urls", [])
+    existing_canonical = {u.canonical_url for u in existing_urls}
+    new_urls = [u for u in seeded if u.canonical_url not in existing_canonical]
+    merged_urls = existing_urls + new_urls
+
+    # --- Wikipedia extract ---------------------------------------------------
+    additional_blocks: list[ScrapedUrlBlock] = list(state.get("additional_blocks") or [])
+    try:
+        wiki = fetch_wikipedia_summary(brand, program_name)
+        if wiki:
+            raw = build_wikipedia_block(wiki)
+            block = ScrapedUrlBlock.model_validate(raw)
+            existing_wiki = {b.canonical_url for b in additional_blocks}
+            if block.canonical_url not in existing_wiki:
+                additional_blocks = [block, *additional_blocks]
+    except Exception as exc:
+        _log_enrichment_error("wikipedia", exc)
+
+    return {
+        "retrieved_urls": merged_urls,
+        "additional_blocks": additional_blocks,
+        "updated_at": now_iso(),
+    }
+
+
+def _log_enrichment_error(source: str, exc: Exception) -> None:
+    import logging
+    logging.getLogger(__name__).warning("web_enrichment[%s] non-fatal error: %s", source, exc)
 
 
 def retrieval_node(state: AgentState) -> dict:
@@ -276,7 +367,9 @@ def build_kobie_graph():
     graph = StateGraph(AgentState)
     graph.add_node("input_validator", input_validator_node)
     graph.add_node("query_generator", query_generator_node)
+    graph.add_node("app_ratings", app_ratings_node)
     graph.add_node("retrieval", retrieval_node)
+    graph.add_node("web_enrichment", web_enrichment_node)
     graph.add_node("firecrawl_scraper", firecrawl_node)
     graph.add_node("ingest", ingest_node)
     graph.add_node("adjudication", adjudication_node)
@@ -287,8 +380,10 @@ def build_kobie_graph():
         route_after_input_validator,
         {"query_generator": "query_generator", "__end__": END},
     )
-    graph.add_edge("query_generator", "retrieval")
-    graph.add_edge("retrieval", "firecrawl_scraper")
+    graph.add_edge("query_generator", "app_ratings")
+    graph.add_edge("app_ratings", "retrieval")
+    graph.add_edge("retrieval", "web_enrichment")
+    graph.add_edge("web_enrichment", "firecrawl_scraper")
     graph.add_edge("firecrawl_scraper", "ingest")
     graph.add_edge("ingest", "adjudication")
     graph.add_edge("adjudication", "narration")
@@ -345,6 +440,13 @@ def run_validation_chat_traced(
         emit("query_generator", "error", _latest_error_message(state, "Query generation failed."))
         return state
 
+    emit("app_ratings", "running", "Fetching app ratings from Google Play and App Store.")
+    state = {**state, **app_ratings_node(state)}
+    if state.get("prefetched_app_ratings"):
+        emit("app_ratings", "complete", "App ratings fetched directly from store APIs.")
+    else:
+        emit("app_ratings", "waiting", "No app ratings found (program may not have a public app).")
+
     emit("retrieval", "running", "Retrieving and deduplicating Tavily URLs.")
     state = {**state, **retrieval_node(state)}
     if state.get("retrieval_result"):
@@ -352,6 +454,11 @@ def run_validation_chat_traced(
     else:
         emit("retrieval", "error", _latest_error_message(state, "Retrieval failed."))
         return state
+
+    emit("web_enrichment", "running", "Seeding direct URLs and fetching Wikipedia company data.")
+    state = {**state, **web_enrichment_node(state)}
+    n_seeded = len(cast(list, state.get("additional_blocks") or []))
+    emit("web_enrichment", "complete", f"Direct URLs injected; {n_seeded} additional block(s) ready.")
 
     emit("firecrawl_scraper", "running", "Scraping URLs into raw markdown blocks.")
     state = {**state, **firecrawl_node(state)}

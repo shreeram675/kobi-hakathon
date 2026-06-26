@@ -11,7 +11,7 @@ class FakeTavilyClient:
     def __init__(self):
         self.calls = []
 
-    def search(self, query, max_results=5):
+    def search(self, query, max_results=5, days=None):  # noqa: unused-parameter
         self.calls.append((query, max_results))
         return [
             {
@@ -44,7 +44,7 @@ def test_retrieve_urls_requests_five_per_query_and_dedupes_urls():
 
     result = retrieve_urls(queries, client=client)
 
-    assert client.calls == [("Example Rewards terms", 5), ("Example Rewards valuation", 5)]
+    assert client.calls == [("Example Rewards terms", 3), ("Example Rewards valuation", 3)]
     assert result.total_queries == 2
     assert result.raw_result_count == 6
     assert result.unique_result_count == 2

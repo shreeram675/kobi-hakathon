@@ -123,6 +123,11 @@ class KobieModel(BaseModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True)
 
 
+class SearchContext(KobieModel):
+    program_type: str | None = None
+    entity_disambiguation: str | None = None
+
+
 class ProgramIdentity(KobieModel):
     identity_id: str = Field(default_factory=lambda: new_id("identity"))
     raw_input: str
@@ -133,12 +138,16 @@ class ProgramIdentity(KobieModel):
     program_subtype: str | None = None
     confidence: float = Field(ge=0, le=1)
     status: Literal["resolved"] = "resolved"
+    official_domain: str | None = None
+    noise_exclude_terms: list[str] = Field(default_factory=list)
+    search_context: SearchContext | None = None
 
 
 class ClarificationOption(KobieModel):
     program_name: str
     brand: str
     domain: str
+    official_domain: str | None = None
 
 
 class ValidationResult(KobieModel):
@@ -148,6 +157,7 @@ class ValidationResult(KobieModel):
     possible_matches: list[ClarificationOption] = Field(default_factory=list)
     follow_up_questions: list[str] = Field(default_factory=list, max_length=3)
     reason: str | None = None
+    missing_info: str | None = None
 
     @model_validator(mode="after")
     def resolved_requires_identity(self) -> "ValidationResult":
@@ -449,6 +459,7 @@ class AgentState(TypedDict):
     retrieved_urls: list[RetrievedUrl]
     firecrawl_result: FirecrawlScrapeOutput | None
     scraped_blocks: list[ScrapedUrlBlock]
+    additional_blocks: NotRequired[list[ScrapedUrlBlock]]
     raw_documents: NotRequired[list[RawDocument]]
     semantic_chunks: NotRequired[list[SemanticChunk]]
     extraction_chunks: NotRequired[list[SemanticChunk]]
@@ -456,6 +467,7 @@ class AgentState(TypedDict):
     schema_config: NotRequired[dict[str, Any] | None]
     extracted_packets: NotRequired[list[ExtractedObjectPacket]]
     normalized_packets: NotRequired[list[NormalizedObjectPacket]]
+    prefetched_app_ratings: NotRequired[NormalizedObjectPacket | None]
     field_report: NotRequired[FieldReport | None]
     retrieved_pages: list[PageRef]
     sanitized_chunks: list[ChunkRef]

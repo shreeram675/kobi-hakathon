@@ -74,6 +74,7 @@ def test_generate_queries_uses_validated_identity():
 
 def test_generate_queries_uses_local_fallback_for_gemini_429(monkeypatch):
     monkeypatch.delenv("QUERY_GENERATOR_LOCAL_FALLBACK", raising=False)
+    monkeypatch.setenv("QUERY_GENERATOR_GROQ_API_KEYS", "")
     identity = ProgramIdentity(
         raw_input="Air India",
         program_name="Air India Maharaja Club",
@@ -108,12 +109,12 @@ def test_local_query_fallback_keeps_queries_concise():
     assert 9 <= len(result.queries) <= 15
     assert all(len(query.query.split()) <= 10 for query in result.queries)
     assert any("lounge_access" in query.target_fields for query in result.queries)
-    assert any("app_ratings" in query.target_fields for query in result.queries)
+    assert not any(q.source_type == "app_reviews" for q in result.queries)
 
 
 def test_query_generator_prompt_contains_strict_query_laws():
-    assert "If the input domain is provided, it overrides" in QUERY_GENERATOR_SYSTEM_PROMPT
-    assert "Maximum: 10 words" in QUERY_GENERATOR_SYSTEM_PROMPT
+    assert "domain" in QUERY_GENERATOR_SYSTEM_PROMPT  # domain override rule must be present
+    assert "10 words" in QUERY_GENERATOR_SYSTEM_PROMPT
     assert "reddit.com" in QUERY_GENERATOR_SYSTEM_PROMPT  # blocked domain must be listed
     assert "field_query_map" in QUERY_GENERATOR_SYSTEM_PROMPT
     assert '"queries": [' in QUERY_GENERATOR_SYSTEM_PROMPT

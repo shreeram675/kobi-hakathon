@@ -1,8 +1,11 @@
 import type {
   AgentState,
+  CacheCheckResult,
+  CompareCacheCheckItem,
   ConverseAnswer,
   CreateRunBody,
   CreateRunResponse,
+  RunHistoryEntry,
   RunSummary,
 } from "./types";
 
@@ -31,6 +34,22 @@ export async function fetchRun(runId: string): Promise<AgentState> {
 export async function fetchRuns(): Promise<RunSummary[]> {
   const res = await fetch("/api/run", { cache: "no-store" });
   return asJson<RunSummary[]>(res);
+}
+
+export async function fetchRunHistory(): Promise<RunHistoryEntry[]> {
+  const res = await fetch("/api/run/history", { cache: "no-store" });
+  return asJson<RunHistoryEntry[]>(res);
+}
+
+export async function checkCache(q: string): Promise<CacheCheckResult> {
+  const res = await fetch(`/api/cache/check?q=${encodeURIComponent(q)}`, { cache: "no-store" });
+  return asJson<CacheCheckResult>(res);
+}
+
+export async function checkCacheMulti(programs: string[]): Promise<CompareCacheCheckItem[]> {
+  const params = programs.map((p) => `programs=${encodeURIComponent(p)}`).join("&");
+  const res = await fetch(`/api/cache/check-multi?${params}`, { cache: "no-store" });
+  return asJson<CompareCacheCheckItem[]>(res);
 }
 
 export async function postConverse(

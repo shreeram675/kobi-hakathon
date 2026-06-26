@@ -25,7 +25,11 @@ def ingest_node(
 ) -> dict[str, Any]:
     """Run raw store, chunking, extraction, normalization, and packet storage."""
 
-    blocks = state.get("scraped_blocks", [])
+    firecrawl_blocks = state.get("scraped_blocks", [])
+    additional_blocks = list(state.get("additional_blocks") or [])
+    # additional_blocks (Wikipedia, etc.) go first so extraction sees high-quality
+    # structured text before noisy scraped content.
+    blocks = [*additional_blocks, *firecrawl_blocks]
     if not blocks:
         return {
             "errors": [
@@ -71,6 +75,9 @@ def ingest_node(
         extraction_context=extraction_context,
     )
     normalized_packets = [normalize_packet(packet, config) for packet in extracted_packets]
+    prefetched_ratings = state.get("prefetched_app_ratings")
+    if prefetched_ratings is not None:
+        normalized_packets = [prefetched_ratings, *normalized_packets]
     persist_normalized_packets(normalized_packets, db_path=db_path)
     field_report = build_field_report(normalized_packets, config, entity_name=state.get("program_name"))
 

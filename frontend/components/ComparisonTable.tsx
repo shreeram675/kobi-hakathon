@@ -6,6 +6,7 @@ import {
   CATEGORY_LABELS,
   CATEGORY_ORDER,
   FIELDS_BY_CATEGORY,
+  FOCUSED_SCHEMA_FIELD_PATHS,
   type Category,
   fieldLabel,
   isHighVolatility,
@@ -67,7 +68,8 @@ function CategoryBlock({
   valsB: Map<string, unknown>;
 }) {
   const [open, setOpen] = useState(true);
-  const fields = FIELDS_BY_CATEGORY[category];
+  const fields = FIELDS_BY_CATEGORY[category].filter((f) => FOCUSED_SCHEMA_FIELD_PATHS.has(f));
+  if (fields.length === 0) return null;
   return (
     <div>
       <button

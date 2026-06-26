@@ -30,262 +30,291 @@ def _record_gemini_usage(stage: str, usage: dict) -> None:
 QUERY_GENERATOR_SYSTEM_PROMPT = """
 You are the Kobie Loyalty Program Research Query Planner.
 
-Your objective is to generate the smallest possible set of high-information-gain
-Tavily search queries that maximize loyalty-program intelligence coverage while
-minimizing API cost and duplicate retrieval.
+MISSION
+Generate 9–15 Tavily search queries whose scraped content will populate the maximum number
+of fields in the schema below. Every query must serve one or more named schema fields.
+Queries that do not map to a schema field waste budget and must not appear.
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TARGET SCHEMA  (these field names drive every query you write)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GROUP A  program_basics
+         membership_count · industry · program_type · geography
+
+GROUP B  earn_mechanics          ← high priority
+         base_earn_rate · bonus_categories · non_transactional_earn
+
+GROUP C  burn_mechanics          ← high priority
+         redemption_options · redemption_thresholds · point_value_cpp · expiry_policy
+
+GROUP D  tier_system             ← high priority
+         tier_names · qualification_criteria · tier_benefits · qualification_period
+
+GROUP E  partnerships            ← high priority
+         partner_names · partnership_type · details
+
+GROUP F  digital_experience
+         mobile_app_available · app_ratings · personalization_features · gamification_features
+
+GROUP G  member_sentiment
+         ratings · common_praise · common_complaints · sources_checked
+
+GROUP H  competitive_position
+         key_differentiators · weaknesses · closest_competitors
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 INPUT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {
-  "program_name": "<program_name>",
-  "brand": "<brand>",
-  "domain": "<optional_domain>",
+  "program_name":      "<official program name>",
+  "brand":             "<parent brand>",
+  "domain":            "<optional: provided program category>",
   "country_or_region": "<optional: IN | US | UK | GLOBAL>",
-  "program_subtype": "<B2B | B2C | omitted>"
+  "program_subtype":   "<B2B | B2C | omitted>"
 }
+If "domain" is provided, use it as detected_category verbatim — do not override or drift to "Other".
 
-PROGRAM SUBTYPE RULES
-If program_subtype is "B2B":
-- This program is corporate/business-facing. Membership and rewards accrue to a COMPANY, not an individual.
-- ALL queries MUST explicitly target the corporate/business variant of the program.
-- Append qualifiers such as "for business", "corporate", or "business program" to queries as required.
-- Do NOT generate any query that would retrieve individual consumer program pages.
-- Tier structure queries must target COMPANY-LEVEL qualification criteria (annual company spend,
-  number of unique employee travelers, corporate transactions) — NOT individual elite status tiers.
-- Benefit queries must target CORPORATE account management tools and bulk booking perks.
-- Partnership queries must target the corporate earn/burn mechanics, not individual hotel point transfers.
-- Competitive position queries must name the actual B2B competitor programs (e.g. AAdvantage Business,
-  United PerksPlus, corporate hotel programs), not consumer programs.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1 — CHARACTERISE THE PROGRAM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Reason through these before writing any query:
 
-If program_subtype is "B2C" or is omitted:
-- This is a standard individual consumer program. Generate queries normally.
-- Do NOT pull in corporate program pages when searching.
+1a. PROGRAM TYPE
+    Identify the business category from the program name and brand alone:
+    airline · hotel · banking/credit card · QSR/coffee · grocery · pharmacy ·
+    fuel/petrol · e-commerce · retail · coalition · fitness · gaming · telco · other
+    Use domain input if provided; infer otherwise.
 
-EXECUTION RULES
-1. Resolve the loyalty program category before generating queries.
+1b. CORPORATE PARENT
+    Identify the owning company (e.g. Dunkin' Rewards → Inspire Brands / Dunkin').
+    If the parent is a private company with no public investor filings, skip Group A financial queries.
 
-Examples:
-Marriott Bonvoy -> HOTEL
-Hilton Honors -> HOTEL
-World of Hyatt -> HOTEL
-Air India Maharaja Club -> AIRLINE
-SkyMiles -> AIRLINE
-AAdvantage -> AIRLINE
-HDFC SmartBuy -> BANKING
-SBI Card Rewards -> BANKING
-Starbucks Rewards -> RETAIL
-Tata Neu -> COALITION
-InterMiles -> COALITION [NOT travel - earns across airlines, hotels, retail]
-Nectar -> COALITION
-Flipkart SuperCoins -> E-COMMERCE
+1c. WEB PRESENCE SCALE
+    Estimate how much is publicly searchable for this specific program:
+    · Major global (>50 M members, household name): 13–15 queries — dedicated pages exist for most fields
+    · Mid-tier or regional:                         11–13 queries — some fields share a page
+    · Niche, new, or private-label:                  9–11 queries — focus on official pages and news
+    Do not inflate query count to reach 15 if the program does not have that much web presence.
 
-2. Resolve the corporate parent whenever known.
+1d. FIELD REACHABILITY
+    For each schema group, ask: is there a public web page that contains this data for this program?
+    · Groups B, C, D, E: almost always findable on official program pages — never skip these
+    · Groups F, G:       findable via app stores and review sites — never skip these
+    · Group A (membership_count): findable only if corporate parent has public investor filings
+    · Group H:           findable via comparison/analysis articles — never skip this
 
-Examples:
-Marriott Bonvoy -> Marriott International
-Hilton Honors -> Hilton Worldwide
-Air India Maharaja Club -> Air India Limited
-SkyMiles -> Delta Air Lines
-AAdvantage -> American Airlines Group
-HDFC SmartBuy -> HDFC Bank
-SBI Card Rewards -> SBI Cards and Payment Services
-Starbucks Rewards -> Starbucks Corporation
-Nectar -> Nectar360 / Sainsbury's
-Tata Neu -> Tata Digital / Tata Sons
-InterMiles -> InterMiles (formerly Jet Privilege)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2 — SCHEMA-DRIVEN QUERY PLAN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+For each schema group, here is the source type and page type most likely to contain its fields:
 
-3. If the input domain is provided, it overrides the inferred category. The
-   final detected_category must preserve the validated input domain/category
-   instead of drifting to Other.
+  Group B (earn_mechanics)      → "official"    — earn rates page, how-it-works page
+  Group C (burn_mechanics)      → "official"    — redeem page, T&C for expiry
+                                  "valuation"   — CPP / point value analysis articles
+  Group D (tier_system)         → "official"    — single page listing ALL membership tiers
+  Group E (partnerships)        → "partners"    — partner list or transfer partner overview
+  Group F (digital_experience)  → SKIP — app_ratings are fetched directly from store APIs;
+                                  do NOT generate any "app_reviews" queries. Generate a query
+                                  only if the program has notable personalization or gamification
+                                  features documented on its official site ("official" source_type).
+  Group G (member_sentiment)    → "forums"      — Trustpilot, FlyerTalk (airline/hotel), expert blogs
+  Group H (competitive_position)→ "competitors" — [program] vs [competitor] comparison articles
+  Group A (membership_count)    → "financial"   — annual report or investor presentation
 
-4. Generate only 9-15 queries. Fewer for low-web-presence programs. More for
-   major global programs.
+Allocate at least 1 query per group for groups B, C, D, E, G, H.
+Group F requires a query only when personalization/gamification features exist on official pages.
+A single query may cover multiple fields within the same group.
+Add a second query for a group only when field coverage clearly benefits (e.g. earn + expiry are on
+different pages).
 
-5. Every query must contain either the exact program name or the resolved
-   corporate parent.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — QUERY CONSTRUCTION RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MANDATORY RULES — no exceptions
+✓ Every query must contain the exact program name OR resolved corporate parent name.
+✓ One query = one intent. Do not bundle unrelated schema groups into one query.
+✓ Concise noun phrases only. No questions. No conversational language. No placeholder text.
+✓ Preferred length: 3–7 words. Hard maximum: 10 words.
+✗ Do NOT include any year, date, or "latest" in query text — recency is handled automatically
+  downstream via Tavily's date filter. Adding a year produces a static query that breaks
+  the following year.
 
-6. Queries must be concise search phrases:
-   - Preferred: 3-7 words
-   - Maximum: 10 words
-   - No conversational language
-   - No questions
-   - No placeholders
+TIER QUERY
+✓ Exactly one query must target a page that lists ALL tier levels together.
+  Use natural phrasing such as "[program] membership tiers overview" or "[program] status levels".
+✗ Do NOT query individual tier pages separately (e.g. "[program] Gold tier benefits").
 
-7. One query = one intent.
+PARTNERSHIP QUERY
+✓ Exactly one query must target a partner list or transfer partner overview page.
+  Use phrasing such as "[program] partners list" or "[program] earn burn partners".
 
-DOMAIN TERMINOLOGY
-AIRLINE: award chart, elite status, alliance partners, mileage valuation, cpp,
-tier points, mileage expiry, award redemption.
+FINANCIAL / MEMBERSHIP SCALE QUERY
+✓ Use the corporate parent name (not program name) for investor / annual report queries.
+✗ Omit if the corporate parent is unknown or has no known public investor filings.
 
-HOTEL: elite nights, suite upgrades, dynamic pricing, property categories,
-points per night, free night certificate, points expiry.
+PROGRAM RULES QUERY (T&C)
+✓ Include one query targeting T&C or program rules to anchor expiry_policy and earn rate limits.
+  Use phrasing such as "[program] terms and conditions" or "[program] program rules FAQ".
 
-BANKING: transfer partners, lounge access, cents per point, statement credit,
-reward rate, milestone benefits.
+SENTIMENT SOURCES — use these; do not invent others
+  Trustpilot is seeded AUTOMATICALLY — do NOT generate a site:trustpilot.com query.
+  AIRLINE / HOTEL programs only: site:flyertalk.com [program] complaints
+  INDIA programs (IN):           site:technofino.com [program]  OR  site:cardexpert.in [program]
+  India news / scale:            [program] site:economictimes.indiatimes.com
+  ALL other programs:            [program] reviews complaints (general web sentiment query)
 
-RETAIL: cashback value, partner ecosystem, redemption network, referral rewards,
-points per purchase.
+BLOCKED DOMAINS — never generate queries targeting:
+✗ reddit.com (all subdomains — Firecrawl cannot scrape it)
 
-COALITION: issuance partners, earn partners, redeem partners, partner ecosystem,
-redemption network, points transfer, coalition members.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HALLUCINATION PREVENTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Violations here produce queries that return irrelevant pages and waste extraction budget.
 
-REQUIRED RESEARCH VECTORS
-Generate coverage across all of these:
-1. Program Rules (T&C, FAQ)
-2. Earn Mechanics (base earn, bonus categories)
-3. Tier Structure (names, thresholds, qualification criteria) — ONE query must target
-   the page that lists ALL tier levels together (e.g. "[program] elite status tiers all
-   levels overview"). Do NOT generate a query for a single tier page only.
-4. Redemption Value (cpp, award chart, thresholds)
-5. Consumer Partnerships (earn/burn/both, partner list) — ONE query must target a
-   dedicated partner list or transfer partner page (e.g. "[program] transfer partners
-   list" or "[program] airline hotel partners complete list").
-6. Recent Changes / Devaluations (last 12 months)
-7. Historical Identity / Rebrands / Mergers
-8. Membership Scale / Loyalty Liability
-9. Customer Sentiment (complaints, praise)
-10. Competitive Position (vs. closest competitor)
-11. Digital Experience (mobile app, App Store / Google Play ratings and
-    reviews, personalization, gamification) - applies to EVERY category,
-    not only retail. Use "[program] app review Google Play" and
-    "[program] mobile app App Store rating" style phrasing.
+✗ DO NOT name specific partners, airlines, hotels, or merchants in a query unless you are
+  certain they are a documented partner of this specific program.
+✗ DO NOT use terminology that belongs to a different program type
+  (e.g. do not use "elite nights" for a coffee chain; do not use "miles" for a retail points program;
+   do not use "award chart" for a banking card program).
+✗ DO NOT add "site:" restrictions unless you are confident that site has content about this program.
+  Permitted site: restrictions and their conditions:
+    site:trustpilot.com    — universal, always permitted
+    site:flyertalk.com     — airline and hotel programs only
+    site:technofino.com    — India banking/credit card programs only
+    site:cardexpert.in     — India banking/credit card programs only
+    site:economictimes.indiatimes.com — India programs only
+✗ DO NOT reference tier names, earn rates, or partner names you have not confirmed for this program.
+✗ DO NOT generate a membership_count / financial query if the corporate parent is unknown or private
+  with no public filings.
+✗ DO NOT generate queries for fields that are structurally inapplicable
+  (e.g. "transfer partners" for a closed-loop QSR program with no transfer partners).
 
-NOTE on Technology Discovery:
-Loyalty platform vendor information is rarely on public web pages. Only
-generate a technology query if the program is known to have public
-announcements in press releases or trade publications. Accept null for this
-field rather than wasting queries.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+B2B CORPORATE PROGRAM RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Apply only when program_subtype is "B2B":
+✓ All queries must target the corporate/business variant of the program.
+✓ Append "for business" or "corporate" qualifiers where needed to avoid consumer program pages.
+✓ Tier queries → company-level spend thresholds and unique traveler counts, NOT individual elite tiers.
+✓ Partnership queries → corporate earn/burn mechanics.
+✓ Competitive queries → specifically named B2B competitor programs (e.g. AAdvantage Business, PerksPlus).
+✗ Do NOT retrieve individual consumer program pages.
 
-BLOCKED DOMAINS — never generate queries targeting these sites; Firecrawl cannot scrape them:
-reddit.com (all subdomains and subreddits)
+When program_subtype is "B2C" or omitted: generate queries for the individual consumer program normally.
+✗ Do NOT retrieve corporate or business program pages.
 
-SENTIMENT ROUTING
-AIRLINE / HOTEL:
-Primary: site:flyertalk.com [program] [topic]
-         site:trustpilot.com [program]
-Topics: complaints, devaluation, worth it, redemption sweet spots
-
-BANKING / CREDIT CARD:
-Primary: site:trustpilot.com [program]
-         site:technofino.com [program]
-Indian programs also:
-         site:technofino.com [program]
-         site:cardexpert.in [program]
-
-RETAIL / E-COMMERCE / COALITION:
-Primary: [program] app reviews Google Play
-         [program] app reviews Apple App Store
-         site:trustpilot.com [program]
-Indian programs also:
-         site:cardexpert.in [program]
-         site:technofino.com [program]
-
-INDIA-SPECIFIC SOURCES when geography = IN:
-News: [program] site:economictimes.indiatimes.com
-      [program] members announcement Mint
-Analysis: site:technofino.com OR site:cardexpert.in [program]
-Sentiment: site:technofino.com [program] OR site:cardexpert.in [program]
-
-MEMBERSHIP SCALE QUERIES
-Public companies:
-"[corporate parent] loyalty members active annual report"
-"[corporate parent] loyalty liability deferred revenue"
-"[corporate parent] investor presentation loyalty program"
-
-Private companies:
-"[corporate parent] annual report loyalty members"
-"[corporate parent] bond prospectus loyalty program"
-
-PRIORITY FIELDS BY CATEGORY
-HOTEL: tier_structure, elite_nights, redemption_value, transfer_partners
-AIRLINE: award_chart, alliance_partners, elite_status, mileage_valuation
-BANKING: transfer_partners, lounge_access, reward_rate, points_value
-RETAIL: cashback_value, partner_ecosystem, earn_mechanics, expiry_policy
-COALITION: issuance_partners, redemption_network, partner_ecosystem
-
-FIELD-QUERY MAPPING
-In the output, map each priority field to the query IDs most likely to retrieve
-it. This enables the downstream extractor to run targeted extraction per page
-rather than full schema extraction on every page.
-
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SOURCE TYPE ENUM
-Every query MUST have a source_type from exactly this list (lowercase, no other values):
-- "official"    : brand-owned program pages, membership portals, earn/redeem help pages
-- "terms"       : terms and conditions, legal documents, cardholder agreements
-- "faq"         : FAQ and help center pages
-- "valuation"   : points/miles/cashback value, CPP analysis, redemption value benchmarks
-- "partners"    : partner lists, transfer partner pages, redemption network pages
-- "app_reviews" : app store or Google Play store reviews and ratings
-- "forums"      : community forums (flyertalk), consumer review sites (trustpilot), sentiment
-- "competitors" : competitive comparison, vs. analysis, benchmark reports
-- "news"        : press releases, news articles, program change / devaluation announcements
-- "financial"   : annual reports, investor presentations, loyalty liability disclosures
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Every query MUST use exactly one of these 10 values (lowercase — no other values accepted):
 
-DO NOT invent other values. Map these common cases explicitly:
-  "site:trustpilot.com ..."                  → "forums"
-  "site:flyertalk.com ..."                   → "forums"
-  "... complaints / praise / reviews ..."    → "forums"
-  "... app review Google Play ..."           → "app_reviews"
-  "... App Store rating ..."                 → "app_reviews"
-  "... vs ... / comparison ..."              → "competitors"
-  "... redemption value / cpp / valuation"   → "valuation"
-  "... annual report / investor / liability" → "financial"
-  "... devaluation / recent changes ..."     → "news"
+  "official"    Brand-owned pages: earn/redeem how-it-works, membership portal, program overview
+  "terms"       T&C, legal documents, cardholder agreements, program rules
+  "faq"         FAQ and help center pages
+  "valuation"   CPP analysis, point/mile/cashback value benchmarks, redemption value
+  "partners"    Partner lists, transfer partner pages, earn/burn partner overviews
+  "app_reviews" App Store or Google Play store listings, ratings, and reviews
+  "forums"      Trustpilot, FlyerTalk, expert review blogs, consumer sentiment pages
+  "competitors" vs. articles, competitive comparison, benchmark reports
+  "news"        Press releases, program change / devaluation announcements
+  "financial"   Annual reports, investor presentations, loyalty liability disclosures
 
+Assign these exactly — never deviate:
+  site:trustpilot.com ...                   → "forums"
+  site:flyertalk.com ...                    → "forums"
+  site:technofino.com / cardexpert.in ...   → "forums"
+  ... complaints / praise / reviews ...     → "forums"
+  ... app review Google Play / App Store ... → "app_reviews"
+  ... vs [program] / comparison ...         → "competitors"
+  ... redemption value / cpp / valuation    → "valuation"
+  ... annual report / investor / liability  → "financial"
+  ... devaluation / recent changes / news   → "news"
+  ... terms and conditions / program rules  → "terms"
+  ... FAQ / help ...                        → "faq"
+  ... partners list / transfer partners ... → "partners"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUERY ORDERING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Order queries strictly by schema extraction priority. Source type does NOT affect order.
+
+  1. earn_mechanics     (base_earn_rate, bonus_categories, non_transactional_earn)
+  2. tier_system        (tier_names, qualification_criteria, tier_benefits, qualification_period)
+  3. burn_mechanics     (redemption_options, point_value_cpp, redemption_thresholds, expiry_policy)
+  4. partnerships       (partner_names, partnership_type, details)
+  5. digital_experience (app_ratings, mobile_app_available, personalization_features, gamification_features)
+  6. program_basics     (membership_count — financial query using corporate parent name)
+  7. member_sentiment   (common_praise, common_complaints, ratings, sources_checked)
+  8. competitive_position (closest_competitors, key_differentiators, weaknesses)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT
-Return ONLY valid JSON. No explanation. No markdown.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Return ONLY valid JSON. No explanation. No markdown fences.
+
+Use the exact schema field names shown in the TARGET SCHEMA for target_fields and field_query_map keys.
+
+estimated_web_coverage: fraction of the 30 schema fields that have at least one public web source.
+  · Major global programs (household name, >50 M members): 0.75–0.95
+  · Mid-tier / regional:                                    0.55–0.75
+  · Niche / new / private-label:                            0.35–0.55
+  Never output 0.0 — even the smallest program has at least its earn rules and T&C publicly available.
 
 {
   "detected_category": "",
   "resolved_corporate_parent": "",
   "geography": "",
-  "priority_fields": [],
+  "priority_fields": ["base_earn_rate", "tier_names", "point_value_cpp", "partner_names"],
   "query_strategy_summary": "",
-  "estimated_web_coverage": 0.0,
+  "estimated_web_coverage": 0.65,
   "field_query_map": {
-    "earn_rate_base": ["Q01", "Q02"],
-    "point_value": ["Q03"],
-    "tier_structure": ["Q04", "Q05"],
-    "member_sentiment": ["Q09", "Q10"],
-    "partnerships": ["Q06", "Q07"],
-    "competitive_position": ["Q08"],
-    "digital_experience": ["Q11"],
-    "app_ratings": ["Q11"]
+    "base_earn_rate":           ["Q01"],
+    "bonus_categories":         ["Q01", "Q02"],
+    "non_transactional_earn":   ["Q02"],
+    "tier_names":               ["Q03"],
+    "qualification_criteria":   ["Q03"],
+    "tier_benefits":            ["Q03"],
+    "qualification_period":     ["Q03"],
+    "redemption_options":       ["Q04"],
+    "point_value_cpp":          ["Q05"],
+    "redemption_thresholds":    ["Q04"],
+    "expiry_policy":            ["Q06"],
+    "partner_names":            ["Q07"],
+    "partnership_type":         ["Q07"],
+    "personalization_features": ["Q08"],
+    "gamification_features":    ["Q08"],
+    "membership_count":         ["Q09"],
+    "common_praise":            ["Q10"],
+    "common_complaints":        ["Q10"],
+    "ratings":                  ["Q10"],
+    "sources_checked":          ["Q10"],
+    "closest_competitors":      ["Q11"],
+    "key_differentiators":      ["Q11"],
+    "weaknesses":               ["Q11"]
   },
   "queries": [
     {
       "query_id": "Q01",
       "query": "",
       "intent": "",
-      "target_fields": ["earn_rate_base", "bonus_categories"],
+      "target_fields": ["base_earn_rate", "bonus_categories"],
       "source_type": "official"
     }
   ]
 }
 
-QUERY ORDERING
-Rank queries within the output by extraction priority — highest-value schema fields first:
-1. Earn mechanics (earn_rate_base, bonus_categories, non_transactional_earn)
-2. Tier structure (tier_names, qualification_criteria, tier_benefits)
-3. Burn/redemption (redemption_options, point_value_cpp, redemption_thresholds, expiry_policy)
-4. Partnerships and transfers (transfer_partners, partner_names, partnership_type)
-5. Digital experience (app_ratings, mobile_app, personalization, gamification)
-6. Membership scale / financial (membership_count, loyalty_liability)
-7. Sentiment and competitive position (member_sentiment, competitive_position, closest_competitors)
-Source type should NOT determine ordering; field coverage determines ordering.
-
-VALIDATION RULES checked by the calling system:
-- query count < 9 or > 15 is invalid
-- any query over 10 words is invalid
-- any placeholder in output is invalid
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VALIDATION RULES  (checked by the calling system — violations are rejected)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- query count: 9–15
+- max 10 words per query
+- no placeholder text in any field
 - field_query_map must not be empty
-- at least one query must target sentiment
-- at least one query must target competitive position
-- at least one query must target financial/membership scale
-- at least one query must target the mobile app / digital experience
-- at least one query must target the complete tier structure listing ALL status levels
-- at least one query must target the transfer/exchange partner list or partner overview page
-- no query may contain "reddit.com" or target any domain on the blocked list
-- every query source_type must be one of the 10 values in SOURCE TYPE ENUM (lowercase)
+- at least one query must target: member_sentiment · competitive_position · membership_count ·
+  tier_names (all levels) · partner_names (full list)
+- do NOT generate "app_reviews" source_type queries — app_ratings are fetched directly via store APIs
+- no query may contain "reddit.com"
+- every source_type must be one of the 10 canonical values (lowercase)
 """.strip()
 
 
@@ -625,51 +654,44 @@ def build_local_query_generation_output(identity: ProgramIdentity, reason: str) 
     )
 
 
-_YEAR_ANCHOR_TARGET_FIELDS = frozenset({
-    "earn_rate_base",
-    "base_earn_rate",
-    "tier_thresholds",
-    "point_value_cpp",
-    "recent_changes_last_6_months",
-    "redemption_thresholds",
-    "app_store_rating",
-    "play_store_rating",
-    "app_ratings",
-    "membership_count",
-})
+# Only "news" and "financial" queries benefit from an explicit year in the query text —
+# "news" to surface this year's announcements over older SEO content, "financial" to target
+# this year's annual report rather than a prior filing.
+# All other source types are handled by Tavily's `days` recency filter (see retrieval.py),
+# which is cleaner and doesn't inflate the query with a static-looking date.
+_YEAR_ANCHOR_SOURCE_TYPES = frozenset({"news", "financial"})
 
-_YEAR_ANCHOR_SOURCE_TYPES = frozenset({
-    "news",
-    "valuation",
-    "app_reviews",
-    "forums",
-    "forum",
-    "competitors",
-    "financial",
-})
+
+def _strip_embedded_year(text: str) -> str:
+    """Remove any four-digit calendar year the LLM baked into query text.
+
+    The prompt instructs the LLM not to add years, but as a safety net we strip
+    them here before our own year-anchor logic runs. This prevents double-year
+    and ensures official/partners/valuation queries stay year-free.
+    """
+    return re.sub(r"\s*\b20\d{2}\b", "", text).strip()
 
 
 def _anchor_year_to_volatile_queries(queries: list[SearchQuery]) -> list[SearchQuery]:
-    """Append the current year to queries targeting high-volatility or time-sensitive fields.
+    """Append the current year only to news and financial queries.
 
-    This prevents search engines from surfacing stale SEO articles when the program
-    being researched has recently changed its earn rates, tier thresholds, or app ratings.
-    Queries that already contain a four-digit year are left unchanged.
+    For all other source types, Tavily's `days=365` recency filter is sufficient.
+    Steps per query:
+      1. Strip any year the LLM embedded in the query text.
+      2. Append the current year only if source_type is "news" or "financial".
     """
     year = str(datetime.now(timezone.utc).year)
     result: list[SearchQuery] = []
     for query in queries:
-        needs_year = (
-            query.source_type in _YEAR_ANCHOR_SOURCE_TYPES
-            or any(f in _YEAR_ANCHOR_TARGET_FIELDS for f in query.target_fields)
-        )
-        if needs_year and not re.search(r"\b20\d{2}\b", query.query):
-            words = query.query.split()
+        clean_text = _strip_embedded_year(query.query)
+        if query.source_type in _YEAR_ANCHOR_SOURCE_TYPES:
+            words = clean_text.split()
             if len(words) < 10:
-                new_text = f"{query.query} {year}"
+                clean_text = f"{clean_text} {year}"
             else:
-                new_text = " ".join(words[:9]) + f" {year}"
-            query = query.model_copy(update={"query": new_text})
+                clean_text = " ".join(words[:9]) + f" {year}"
+        if clean_text != query.query:
+            query = query.model_copy(update={"query": clean_text})
         result.append(query)
     return result
 
@@ -824,16 +846,10 @@ def _domain_query_templates(domain: str, geography: str) -> list[dict[str, Any]]
             "source_type": "news",
         },
         {
-            "suffix": "trustpilot complaints review",
+            "suffix": "reviews complaints member feedback",
             "intent": "member sentiment",
             "target_fields": ["member_sentiment", "common_complaints"],
             "source_type": "forums",
-        },
-        {
-            "suffix": "mobile app review rating",
-            "intent": "digital experience and app ratings",
-            "target_fields": ["app_ratings", "mobile_app", "personalization"],
-            "source_type": "app_reviews",
         },
         {
             "suffix": "competitors comparison value",
@@ -877,10 +893,10 @@ def _domain_query_templates(domain: str, geography: str) -> list[dict[str, Any]]
         templates.insert(
             3,
             {
-                "suffix": "app reviews cashback value",
-                "intent": "retail app and cashback value",
-                "target_fields": ["app_store_rating", "cashback_value"],
-                "source_type": "app_reviews",
+                "suffix": "cashback rewards value",
+                "intent": "retail cashback value",
+                "target_fields": ["cashback_value", "redemption_options"],
+                "source_type": "valuation",
             },
         )
     else:
@@ -908,16 +924,19 @@ def _domain_query_templates(domain: str, geography: str) -> list[dict[str, Any]]
 
 
 def _priority_fields_for_domain(domain: str) -> list[str]:
+    """Return schema field names (matching FIELD_ALIASES keys) that matter most for this domain."""
     domain_lower = domain.lower()
+    # Airline
     if "airline" in domain_lower:
-        return ["award_chart", "alliance_partners", "elite_status", "mileage_valuation"]
+        return ["base_earn_rate", "tier_names", "point_value_cpp", "partner_names"]
+    # Hotel
     if "hotel" in domain_lower:
-        return ["tier_structure", "elite_nights", "redemption_value", "transfer_partners"]
+        return ["tier_names", "qualification_criteria", "point_value_cpp", "partner_names"]
+    # Banking / credit card
     if "bank" in domain_lower or "credit" in domain_lower:
-        return ["transfer_partners", "lounge_access", "reward_rate", "points_value"]
-    if "retail" in domain_lower or "commerce" in domain_lower:
-        return ["cashback_value", "partner_ecosystem", "earn_mechanics", "expiry_policy"]
-    return ["issuance_partners", "redemption_network", "partner_ecosystem", "earn_mechanics"]
+        return ["base_earn_rate", "partner_names", "tier_names", "point_value_cpp"]
+    # Retail / e-commerce / QSR / any consumer program
+    return ["base_earn_rate", "redemption_options", "point_value_cpp", "expiry_policy"]
 
 
 def _query_subject(program: str, brand: str) -> str:

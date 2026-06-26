@@ -457,6 +457,34 @@ export interface CreateRunBody {
   user_input_b?: string;
   /** compare mode: explicit list of programs (supersedes user_input_b when provided). */
   programs?: string[];
+  /** Skip cache lookup and always run the full pipeline. */
+  force_fresh?: boolean;
+}
+
+export interface CacheCheckResult {
+  found: boolean;
+  program_name?: string;
+  brand?: string;
+  country_or_region?: string | null;
+  run_date?: string;
+  run_datetime?: string;
+  run_timestamp?: string;
+  age_days?: number;
+}
+
+export interface CompareCacheCheckItem extends CacheCheckResult {
+  program: string;
+}
+
+export interface RunHistoryEntry {
+  run_id: string;
+  user_input: string;
+  mode: RunMode;
+  program_name?: string | null;
+  data_quality: number;
+  status: "running" | "done" | "error" | "clarification_needed" | "cancelled";
+  created_at: string;
+  source?: "db" | "live";
 }
 
 export interface CreateRunResponse {

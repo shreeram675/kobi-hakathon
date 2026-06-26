@@ -62,7 +62,7 @@ def ba_conflict() -> dict:
 
 
 def fake_call_groq(advocate_a: str, advocate_b: str, judge: str, rebuttal_a: str = "", rebuttal_b: str = ""):
-    async def _call(prompt: str, temperature: float, max_tokens: int) -> str:
+    async def _call(prompt: str, temperature: float, max_tokens: int, **_kwargs) -> str:
         if "You are the Judge" in prompt:
             return judge
         if "Identify the SINGLE weakest point" in prompt:
@@ -122,7 +122,7 @@ def test_run_debate_skips_rebuttals_for_similar_arguments(monkeypatch):
     captured_prompts = []
     same_argument = "Recency carries 0.50 weight so the newer corroborated source wins."
 
-    async def _call(prompt: str, temperature: float, max_tokens: int) -> str:
+    async def _call(prompt: str, temperature: float, max_tokens: int, **_kwargs) -> str:
         captured_prompts.append(prompt)
         if "You are the Judge" in prompt:
             return JUDGE_VERDICT_B

@@ -73,6 +73,6 @@ def test_firecrawl_402_reports_insufficient_credits(monkeypatch):
     monkeypatch.setattr("firecrawl_scraper.provider_for_stage", lambda stage: FakeProvider())
     monkeypatch.setattr("firecrawl_scraper.requests.post", lambda *args, **kwargs: FakeResponse())
 
-    client = FirecrawlRestClient()
+    client = FirecrawlRestClient(api_key="fc-test", api_base="https://api.firecrawl.dev/v2/scrape")
     with pytest.raises(RuntimeError, match="Insufficient Credits"):
         client.scrape("https://example.com")

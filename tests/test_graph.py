@@ -81,7 +81,7 @@ def test_graph_routes_resolved_validator_output_to_query_generator(monkeypatch):
     monkeypatch.setattr(graph, "validate_conversation", lambda messages: resolved_validation_result())
     monkeypatch.setattr(graph, "generate_queries", lambda identity: fake_query_output())
     monkeypatch.setattr(graph, "retrieve_urls", lambda queries: fake_retrieval_output(queries))
-    monkeypatch.setattr(graph, "scrape_retrieved_urls", lambda urls: fake_firecrawl_output(urls))
+    monkeypatch.setattr(graph, "scrape_retrieved_urls", lambda urls, on_progress=None: fake_firecrawl_output(urls))
 
     state = graph.run_validation_chat([{"role": "user", "content": "Air India"}])
 
@@ -100,7 +100,7 @@ def test_query_generator_can_run_explicitly(monkeypatch):
     monkeypatch.setattr(graph, "validate_conversation", lambda messages: resolved_validation_result())
     monkeypatch.setattr(graph, "generate_queries", lambda identity: fake_query_output())
     monkeypatch.setattr(graph, "retrieve_urls", lambda queries: fake_retrieval_output(queries))
-    monkeypatch.setattr(graph, "scrape_retrieved_urls", lambda urls: fake_firecrawl_output(urls))
+    monkeypatch.setattr(graph, "scrape_retrieved_urls", lambda urls, on_progress=None: fake_firecrawl_output(urls))
 
     state = graph.run_validation_chat([{"role": "user", "content": "Air India"}])
     state = graph.run_query_generation(state)
