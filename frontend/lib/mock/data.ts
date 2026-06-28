@@ -437,6 +437,7 @@ function buildBlocks(urls: RetrievedUrl[], profile: ProgramProfile, seed: string
       title: u.title,
       scrape_status: ok ? "success" : "failed",
       error: ok ? null : rng() > 0.5 ? "HTTP 403 (blocked)" : "Timeout after 30s",
+      is_fallback: false,
     };
   });
 }
@@ -761,6 +762,7 @@ export function buildFullState(
       total_urls: blocks.length,
       successful_scrapes: successful,
       failed_scrapes: blocks.length - successful,
+      fallback_scrapes: blocks.filter((b) => b.is_fallback).length,
       blocks,
     },
     scraped_blocks: blocks,

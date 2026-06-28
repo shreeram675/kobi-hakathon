@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import re
 from collections import Counter
@@ -18,6 +19,13 @@ from typing import Any
 
 import cost_tracker
 from providers import provider_for_stage
+
+# File logger so we can diagnose key issues without needing the terminal
+_file_handler = logging.FileHandler("debate_debug.log", encoding="utf-8")
+_file_handler.setLevel(logging.DEBUG)
+_file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+logging.getLogger("kobie.debate").addHandler(_file_handler)
+logging.getLogger("kobie.debate").setLevel(logging.DEBUG)
 
 
 def _cosine_similarity(text_a: str, text_b: str) -> float:
@@ -57,6 +65,7 @@ _GROQ_SEMAPHORE: asyncio.Semaphore | None = None
 # Round-robin key pool — populated lazily from GROQ_API_KEYS (comma-separated)
 # or individual DEBATE_API_KEY / DEBATE_API_KEY_B / GROQ_API_KEY env vars.
 _CLIENT_POOL: list | None = None
+_CLIENT_POOL_KEYS: list[str] = []  # parallel list of key strings for logging
 _POOL_COUNTER: int = 0
 
 NO_REBUTTAL_NOTE = "No rebuttal — arguments not sufficiently differentiated."
@@ -194,7 +203,7 @@ Output ONLY valid JSON, no preamble, no markdown fences:
 
 def _build_client_pool() -> list:
     """Build a round-robin pool of AsyncGroq clients from all available keys."""
-    global _CLIENT_POOL
+    global _CLIENT_POOL, _CLIENT_POOL_KEYS
     if _CLIENT_POOL is not None:
         return _CLIENT_POOL
     import os
@@ -218,6 +227,12 @@ def _build_client_pool() -> list:
     if not keys:
         raise RuntimeError("Debate engine: no Groq API keys configured. Set GROQ_API_KEYS or DEBATE_API_KEY.")
 
+    log = logging.getLogger("kobie.debate")
+    log.info("Debate key pool: %d keys loaded", len(keys))
+    for i, k in enumerate(keys):
+        log.info("  pool[%d]: %s...%s", i, k[:12], k[-4:])
+
+    _CLIENT_POOL_KEYS = keys
     _CLIENT_POOL = [AsyncGroq(api_key=k) for k in keys]
     return _CLIENT_POOL
 
@@ -228,6 +243,23 @@ def _next_client(offset: int = 0):
     client = pool[(_POOL_COUNTER + offset) % len(pool)]
     _POOL_COUNTER += 1
     return client
+
+
+def _remove_client_from_pool(client) -> None:
+    """Permanently remove a bad client from the pool (e.g. on 401)."""
+    global _CLIENT_POOL, _CLIENT_POOL_KEYS
+    log = logging.getLogger("kobie.debate")
+    if _CLIENT_POOL is None:
+        return
+    try:
+        idx = _CLIENT_POOL.index(client)
+        key_hint = f"{_CLIENT_POOL_KEYS[idx][:12]}...{_CLIENT_POOL_KEYS[idx][-4:]}" if idx < len(_CLIENT_POOL_KEYS) else "?"
+        log.error("Removing invalid key from debate pool: %s", key_hint)
+        _CLIENT_POOL.pop(idx)
+        if idx < len(_CLIENT_POOL_KEYS):
+            _CLIENT_POOL_KEYS.pop(idx)
+    except ValueError:
+        pass
 
 
 def _debate_model() -> str:
@@ -253,6 +285,8 @@ async def call_groq(prompt: str, temperature: float, max_tokens: int, *, use_cli
     max_attempts = pool_size * 2
     delay = 5.0
 
+    log = logging.getLogger("kobie.debate")
+
     for attempt in range(max_attempts):
         client = _next_client(offset=base_offset)
         async with _GROQ_SEMAPHORE:
@@ -270,7 +304,20 @@ async def call_groq(prompt: str, temperature: float, max_tokens: int, *, use_cli
                 return (response.choices[0].message.content or "").strip()
             except Exception as exc:
                 msg = str(exc)
-                if "rate_limit_exceeded" not in msg and "429" not in msg:
+                is_rate_limit = "rate_limit_exceeded" in msg or "429" in msg
+                is_invalid_key = "401" in msg or "invalid_api_key" in msg or "Invalid API Key" in msg
+                if is_invalid_key:
+                    # Remove this key from the pool permanently so it is never retried.
+                    _remove_client_from_pool(client)
+                    log.error("Debate engine 401 on attempt %d — key removed, rotating. Error: %s", attempt, msg[:120])
+                    pool = _build_client_pool()
+                    pool_size = len(pool)
+                    if pool_size == 0:
+                        raise RuntimeError("Debate engine: all keys exhausted due to 401 errors.") from exc
+                    if attempt < max_attempts - 1:
+                        continue
+                    raise
+                if not is_rate_limit:
                     raise
                 m = _re.search(r"try again in ([0-9.]+)s", msg)
                 delay = float(m.group(1)) + 0.5 if m else delay * 2

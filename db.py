@@ -17,6 +17,16 @@ _WRITE_LOCK = threading.Lock()
 
 DDL = (
     """
+    CREATE TABLE IF NOT EXISTS run_snapshots (
+        program_name_normalized TEXT PRIMARY KEY,
+        program_name TEXT NOT NULL,
+        brand TEXT,
+        country_or_region TEXT,
+        program_state_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS runs (
         run_id TEXT PRIMARY KEY,
         mode TEXT NOT NULL,
@@ -275,6 +285,80 @@ def upsert_raw_documents(conn: sqlite3.Connection, documents: list[RawDocument])
             rows,
         )
         conn.commit()
+
+
+def save_program_snapshot(
+    conn: sqlite3.Connection,
+    program_name: str,
+    brand: str | None,
+    country_or_region: str | None,
+    program_state_json: str,
+    created_at: str | None = None,
+) -> None:
+    """Upsert a completed program-analysis snapshot keyed by normalised program name."""
+    if created_at is None:
+        created_at = now_iso()
+    normalized = program_name.lower().strip()
+    with _WRITE_LOCK:
+        conn.execute(
+            """
+            INSERT INTO run_snapshots
+                (program_name_normalized, program_name, brand, country_or_region, program_state_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(program_name_normalized) DO UPDATE SET
+                program_name=excluded.program_name,
+                brand=excluded.brand,
+                country_or_region=excluded.country_or_region,
+                program_state_json=excluded.program_state_json,
+                created_at=excluded.created_at
+            """,
+            (normalized, program_name, brand, country_or_region, program_state_json, created_at),
+        )
+        conn.commit()
+
+
+def find_program_snapshot(conn: sqlite3.Connection, query: str) -> dict | None:
+    """Return the most-recent snapshot row for a program query, or None.
+
+    Matching order: exact normalised name → stored name contains query → query words all appear in stored name.
+    """
+    normalized = query.lower().strip()
+
+    row = conn.execute(
+        "SELECT * FROM run_snapshots WHERE program_name_normalized = ?",
+        (normalized,),
+    ).fetchone()
+    if row:
+        return dict(row)
+
+    row = conn.execute(
+        "SELECT * FROM run_snapshots WHERE program_name_normalized LIKE ? ORDER BY created_at DESC LIMIT 1",
+        (f"%{normalized}%",),
+    ).fetchone()
+    if row:
+        return dict(row)
+
+    words = [w for w in normalized.split() if len(w) > 2]
+    if words:
+        like_clause = " AND ".join("program_name_normalized LIKE ?" for _ in words)
+        row = conn.execute(
+            f"SELECT * FROM run_snapshots WHERE {like_clause} ORDER BY created_at DESC LIMIT 1",
+            [f"%{w}%" for w in words],
+        ).fetchone()
+        if row:
+            return dict(row)
+
+    return None
+
+
+def list_program_snapshots(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
+    """Return all stored snapshots ordered by most recent first."""
+    rows = conn.execute(
+        "SELECT program_name, brand, country_or_region, program_state_json, created_at "
+        "FROM run_snapshots ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def upsert_normalized_packets(conn: sqlite3.Connection, packets: list[NormalizedObjectPacket]) -> None:

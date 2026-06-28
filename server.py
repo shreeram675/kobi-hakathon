@@ -1,18 +1,23 @@
 """FastAPI REST backend for the Kobie Next.js frontend.
 
 Endpoints:
-  POST /api/run               → start a pipeline run (background thread)
-  POST /api/run?mock=true     → skip to claims stage with pre-built mock data
-  GET  /api/run               → list all run summaries
-  GET  /api/run/{run_id}      → poll a single run (includes stage_status, status, conversation)
-  POST /api/run/{run_id}/clarify  → submit a clarification answer for the input validator
-  POST /api/run/{run_id}/converse → answer a grounded question
+  POST /api/run                      → start a pipeline run (background thread)
+  POST /api/run?mock=true            → skip to claims stage with pre-built mock data
+  GET  /api/run                      → list all in-memory run summaries
+  GET  /api/run/history              → list DB-persisted runs (survives restarts)
+  GET  /api/run/{run_id}             → poll a single run (stage_status, status, conversation)
+  POST /api/run/{run_id}/clarify     → submit a clarification answer for the input validator
+  POST /api/run/{run_id}/converse    → answer a grounded question
+  GET  /api/cache/check?q=<query>    → check if a program has a stored analysis
+  GET  /api/cache/check-multi?programs=… → batch cache check for compare mode
 """
 from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import threading
+from datetime import datetime, timezone
 from typing import Any
 
 logging.basicConfig(
@@ -21,9 +26,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("kobie")
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel as _PydanticBase
+
+import db as _db
 
 from schemas import (
     AgentState,
@@ -51,6 +58,10 @@ import cost_tracker
 
 app = FastAPI(title="Kobie API")
 
+# ── Persistent DB (cache + history) ───────────────────────────────────────────
+_db_conn: sqlite3.Connection = _db.connect()
+_db.migrate(_db_conn)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000",
@@ -58,6 +69,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Request / response models ─────────────────────────────────────────────────
+# Defined here (before any routes) so FastAPI can resolve them for OpenAPI schema generation.
+
+class CreateRunBody(_PydanticBase):
+    user_input: str
+    mode: str = "single"
+    user_input_b: str | None = None
+    programs: list[str] | None = None
+    mock: bool = False
+    force_fresh: bool = False
+
+
+class ConverseRequest(_PydanticBase):
+    message: str
+
+
+class ClarifyRequest(_PydanticBase):
+    answer: str
+
 
 # UI stage IDs matching frontend schema.ts PIPELINE_STAGES
 UI_STAGES = [
@@ -82,11 +113,14 @@ class RunRecord:
         mode: str,
         user_input_b: str | None = None,
         programs_list: list[str] | None = None,
+        force_fresh: bool = False,
     ) -> None:
         self.run_id = run_id
         self.user_input = user_input
         self.user_input_b = user_input_b
         self.mode = mode
+        self.force_fresh = force_fresh
+        self.cached_response: dict[str, Any] | None = None
         self.state: AgentState = build_initial_state(user_input, RunMode(mode))
         self.state["run_id"] = run_id
         self.cost_ledger = cost_tracker.create_ledger(run_id)
@@ -135,6 +169,8 @@ def _ser(v: Any) -> Any:
 
 
 def build_run_response(record: RunRecord) -> dict[str, Any]:
+    if record.cached_response is not None:
+        return dict(record.cached_response)
     with record.lock:
         result: dict[str, Any] = {k: _ser(v) for k, v in record.state.items()}
         # Always expose the run's original mode, not the per-program sub-state mode
@@ -161,6 +197,16 @@ def build_run_response(record: RunRecord) -> dict[str, Any]:
 
 
 def build_summary(record: RunRecord) -> dict[str, Any]:
+    if record.cached_response is not None:
+        cr = record.cached_response
+        return {
+            "run_id": record.run_id,
+            "user_input": record.user_input,
+            "mode": record.mode,
+            "data_quality": cr.get("data_quality", 0.0),
+            "status": "done",
+            "created_at": cr.get("created_at", ""),
+        }
     with record.lock:
         return {
             "run_id": record.run_id,
@@ -186,6 +232,114 @@ def _apply(record: RunRecord, delta: dict) -> AgentState:
     with record.lock:
         record.state = {**record.state, **delta}
         return record.state
+
+
+# ── Cache helpers ─────────────────────────────────────────────────────────────
+
+def _snapshot_meta(snapshot: dict) -> dict[str, Any]:
+    """Convert a DB snapshot row to a CacheCheckResult-shaped dict."""
+    created_at = snapshot["created_at"]
+    try:
+        dt = datetime.fromisoformat(created_at)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - dt).days
+        run_date = dt.strftime("%Y-%m-%d")
+        run_datetime_str = dt.strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:
+        age_days = 0
+        run_date = created_at[:10]
+        run_datetime_str = created_at
+    return {
+        "found": True,
+        "program_name": snapshot.get("program_name"),
+        "brand": snapshot.get("brand"),
+        "country_or_region": snapshot.get("country_or_region"),
+        "run_date": run_date,
+        "run_datetime": run_datetime_str,
+        "run_timestamp": created_at,
+        "age_days": age_days,
+    }
+
+
+def _save_program_snapshot_to_db(program_name: str, brand: str | None,
+                                  country_or_region: str | None,
+                                  program_state: dict[str, Any]) -> None:
+    """Persist a completed single-program state dict to the DB snapshot cache."""
+    try:
+        _db.save_program_snapshot(
+            _db_conn,
+            program_name,
+            brand,
+            country_or_region,
+            json.dumps(program_state, default=str),
+            now_iso(),
+        )
+        logger.info("Saved snapshot for %s", program_name)
+    except Exception:
+        logger.exception("Failed to save snapshot for %s", program_name)
+
+
+def _make_program_state_snapshot(record: RunRecord) -> dict[str, Any]:
+    """Serialize record.state into the canonical program-state snapshot format."""
+    with record.lock:
+        snap = {k: _ser(v) for k, v in record.state.items()}
+    snap["stage_status"] = {s: "done" for s in UI_STAGES}
+    snap["active_stage"] = None
+    snap["status"] = "done"
+    snap["cost_report"] = record.cost_ledger.to_dict()
+    return snap
+
+
+def _restore_single_from_cache(record: RunRecord, snapshot: dict) -> None:
+    """Populate record so it looks like a completed single run (no pipeline thread needed)."""
+    program_state = json.loads(snapshot["program_state_json"])
+    program_name = program_state.get("program_name") or record.user_input
+    cached: dict[str, Any] = dict(program_state)
+    cached["run_id"] = record.run_id
+    cached["user_input"] = record.user_input
+    cached["mode"] = "single"
+    cached["active_stage"] = None
+    cached["status"] = "done"
+    cached["conversation"] = [
+        {
+            "role": "assistant",
+            "message": (
+                f"I've analysed {program_name}. Ask me anything about its earn "
+                "rates, tiers, partners, or member sentiment — I'll answer only "
+                "from the extracted claims."
+            ),
+            "created_at": now_iso(),
+        }
+    ]
+    cached["comparison_conversation"] = []
+    with record.lock:
+        record.cached_response = cached
+        record.run_status = "done"
+
+
+def _restore_compare_program_from_cache(
+    record: RunRecord,
+    index: int,
+    prog: str,
+    snapshot: dict,
+    all_claims: list,
+    all_names: list,
+    all_field_reports: list,
+) -> None:
+    """Restore one program in a compare run from a DB snapshot."""
+    program_state = json.loads(snapshot["program_state_json"])
+    program_name = program_state.get("program_name") or prog
+    all_names[index] = program_name
+    all_claims[index] = program_state.get("adjudicated_claims", [])
+    all_field_reports[index] = program_state.get("field_report")
+    with record.lock:
+        record.program_states[index] = program_state
+        record.program_statuses[index] = "done"
+        record.program_stage_statuses[index] = program_state.get(
+            "stage_status", {s: "done" for s in UI_STAGES}
+        )
+    logger.info("[%s] program[%d] %s loaded from cache", record.run_id, index, program_name)
 
 
 # ── Core pipeline (single program) ────────────────────────────────────────────
@@ -412,6 +566,16 @@ def run_pipeline(record: RunRecord) -> None:
                             record.program_statuses[j] = "error"
                 break
 
+            # Per-program cache check for compare mode
+            if not record.force_fresh:
+                snapshot = _db.find_program_snapshot(_db_conn, prog)
+                if snapshot:
+                    _restore_compare_program_from_cache(
+                        record, i, prog, snapshot, all_claims, all_names, all_field_reports
+                    )
+                    any_success = True
+                    continue
+
             _reset_record_for_program(record, prog, i)
             cost_tracker.set_active_run_id(record.run_id)
             success = _run_single_pipeline(record)
@@ -420,6 +584,15 @@ def run_pipeline(record: RunRecord) -> None:
             _save_program_result(record, i, success, all_claims, all_names)
             if success:
                 any_success = True
+                # Save freshly-run program to cache
+                prog_state = record.program_states[i]
+                if prog_state:
+                    _save_program_snapshot_to_db(
+                        all_names[i],
+                        prog_state.get("brand"),
+                        prog_state.get("country_or_region"),
+                        prog_state,
+                    )
 
         done_indices = [i for i, s in enumerate(record.program_statuses) if s == "done"]
         if len(done_indices) >= 2:
@@ -486,6 +659,14 @@ def run_pipeline(record: RunRecord) -> None:
 
         if success:
             program_name = record.state.get("program_name") or record.user_input
+            # Save completed analysis to cache
+            snap = _make_program_state_snapshot(record)
+            _save_program_snapshot_to_db(
+                program_name,
+                record.state.get("brand"),
+                record.state.get("country_or_region"),
+                snap,
+            )
             with record.lock:
                 record.conversation = [
                     {
@@ -1055,6 +1236,14 @@ def _run_mock_pipeline(record: RunRecord) -> None:
             with record.lock:
                 all_field_reports_mock[i] = record.state.get("field_report")
             _save_program_result(record, i, True, all_claims, all_names)
+            prog_state = record.program_states[i]
+            if prog_state:
+                _save_program_snapshot_to_db(
+                    all_names[i],
+                    prog_state.get("brand"),
+                    prog_state.get("country_or_region"),
+                    prog_state,
+                )
 
         done_indices = [i for i, s in enumerate(record.program_statuses) if s == "done"]
         if len(done_indices) >= 2:
@@ -1104,6 +1293,13 @@ def _run_mock_pipeline(record: RunRecord) -> None:
     # Single program mock
     _run_mock_single(record, record.user_input)
     program_name = record.state.get("program_name") or record.user_input
+    snap = _make_program_state_snapshot(record)
+    _save_program_snapshot_to_db(
+        program_name,
+        record.state.get("brand"),
+        record.state.get("country_or_region"),
+        snap,
+    )
     with record.lock:
         record.conversation = [
             {
@@ -1119,24 +1315,55 @@ def _run_mock_pipeline(record: RunRecord) -> None:
         record.run_status = "done"
 
 
-# ── Request / response models ─────────────────────────────────────────────────
-class CreateRunBody(_PydanticBase):
-    user_input: str
-    mode: str = "single"
-    user_input_b: str | None = None
-    programs: list[str] | None = None
-    mock: bool = False
-
-
-class ConverseRequest(_PydanticBase):
-    message: str
-
-
-class ClarifyRequest(_PydanticBase):
-    answer: str
-
-
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.get("/api/cache/check")
+def cache_check(q: str) -> dict[str, Any]:
+    """Check whether a single program has a stored analysis in the DB cache."""
+    snapshot = _db.find_program_snapshot(_db_conn, q.strip())
+    if snapshot is None:
+        return {"found": False}
+    return _snapshot_meta(snapshot)
+
+
+@app.get("/api/cache/check-multi")
+def cache_check_multi(programs: list[str] = Query(default=[])) -> list[dict[str, Any]]:
+    """Check cache for multiple programs; returns one result per program in order."""
+    results: list[dict[str, Any]] = []
+    for prog in programs:
+        snapshot = _db.find_program_snapshot(_db_conn, prog.strip())
+        if snapshot:
+            item = _snapshot_meta(snapshot)
+            item["program"] = prog
+        else:
+            item = {"found": False, "program": prog}
+        results.append(item)
+    return results
+
+
+@app.get("/api/run/history")
+def run_history() -> list[dict[str, Any]]:
+    """Return DB-persisted program analyses (survives server restarts)."""
+    rows = _db.list_program_snapshots(_db_conn, limit=100)
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            state = json.loads(row["program_state_json"])
+        except Exception:
+            continue
+        result.append({
+            "run_id": state.get("run_id", ""),
+            "user_input": row["program_name"],
+            "mode": "single",
+            "program_name": row["program_name"],
+            "data_quality": state.get("data_quality", 0.0),
+            "status": "done",
+            "created_at": row["created_at"],
+            "source": "db",
+        })
+    return result
+
+
 @app.post("/api/run", status_code=201)
 def create_run(body: CreateRunBody) -> dict[str, str]:
     if not body.user_input.strip():
@@ -1152,9 +1379,18 @@ def create_run(body: CreateRunBody) -> dict[str, str]:
         if len(clean) >= 2:
             programs_list = clean
 
-    record = RunRecord(run_id, body.user_input.strip(), mode, body.user_input_b, programs_list)
+    record = RunRecord(run_id, body.user_input.strip(), mode, body.user_input_b, programs_list,
+                       force_fresh=body.force_fresh)
     with STORE_LOCK:
         STORE[run_id] = record
+
+    # Single-mode cache short-circuit: restore immediately without starting pipeline thread
+    if not body.mock and not body.force_fresh and mode == "single":
+        snapshot = _db.find_program_snapshot(_db_conn, body.user_input.strip())
+        if snapshot:
+            _restore_single_from_cache(record, snapshot)
+            logger.info("[%s] served from cache for %r", run_id, body.user_input.strip())
+            return {"run_id": run_id}
 
     target = _run_mock_pipeline if body.mock else run_pipeline
     threading.Thread(target=target, args=(record,), daemon=True).start()

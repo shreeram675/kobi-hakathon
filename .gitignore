@@ -4,6 +4,10 @@ __pycache__/
 .pytest_cache/
 .streamlit/secrets.toml
 kobie.sqlite3
+kobie.sqlite3-shm
+kobie.sqlite3-wal
+*.sqlite3.bak*
 Kobie_Phase2_ArcGuide_Updated.pdf
 .env
-streamlit*.log
+*.log
+frontend/.env.local
