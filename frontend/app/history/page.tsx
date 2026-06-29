@@ -19,6 +19,7 @@ import {
   Search,
   SlidersHorizontal,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import { Topbar } from "@/components/Topbar";
@@ -27,8 +28,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/textarea";
 import { useRunHistory } from "@/lib/hooks";
 import { cn, pct, relativeTime, truncate, formatDateTime } from "@/lib/format";
-import { createRun } from "@/lib/api";
-import { upsertRecentSearch } from "@/lib/cache-storage";
+import { createRun, deleteRun } from "@/lib/api";
+import { upsertRecentSearch, removeRecentSearch } from "@/lib/cache-storage";
 import type { RunHistoryEntry, RunMode } from "@/lib/types";
 
 type TypeFilter = "all" | "normal" | "compare";
@@ -218,6 +219,26 @@ export default function HistoryPage() {
     },
   });
 
+  const deleteRunMutation = useMutation({
+    mutationFn: (runId: string) => deleteRun(runId),
+    onSuccess: (_data, runId) => {
+      removeRecentSearch(runId);
+      qc.invalidateQueries({ queryKey: ["runs"] });
+      qc.invalidateQueries({ queryKey: ["run-history"] });
+    },
+  });
+
+  function handleDeleteRun(runId: string) {
+    deleteRunMutation.mutate(runId);
+  }
+
+  function handleDeleteSelected() {
+    for (const run of selectedRuns) {
+      deleteRunMutation.mutate(run.run_id);
+    }
+    exitSelectionMode();
+  }
+
   function toggleSelectionMode() {
     setSelectionMode((prev) => !prev);
     setSelectedIds(new Set());
@@ -369,7 +390,7 @@ export default function HistoryPage() {
           <StatCard icon={LayoutList} label="Total analyses" value={String(stats.total)} />
           <StatCard icon={Sparkles} label="Normal analyses" value={String(stats.normal)} />
           <StatCard icon={GitCompareArrows} label="Compare analyses" value={String(stats.compare)} />
-          <StatCard icon={CheckCircle2} label="Avg. quality" value={stats.complete ? pct(stats.avgQuality) : "-"} />
+          <StatCard icon={CheckCircle2} label="Avg. Content Extracted" value={stats.complete ? pct(stats.avgQuality) : "-"} />
         </section>
 
         <section className="mb-5 rounded-[12px] border border-line bg-white p-4 shadow-panel">
@@ -399,8 +420,8 @@ export default function HistoryPage() {
               <option value="cancelled">Stopped</option>
             </Select>
 
-            <Select label="Quality" value={qualityFilter} onChange={(value) => setQualityFilter(value as QualityFilter)}>
-              <option value="all">All quality</option>
+            <Select label="Content Extracted" value={qualityFilter} onChange={(value) => setQualityFilter(value as QualityFilter)}>
+              <option value="all">All</option>
               <option value="high">High</option>
               <option value="medium">Medium</option>
               <option value="low">Low</option>
@@ -410,8 +431,8 @@ export default function HistoryPage() {
             <Select label="Sort" value={sortKey} onChange={(value) => setSortKey(value as SortKey)}>
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
-              <option value="quality_desc">Quality high to low</option>
-              <option value="quality_asc">Quality low to high</option>
+              <option value="quality_desc">Content extracted high to low</option>
+              <option value="quality_asc">Content extracted low to high</option>
               <option value="name_asc">Name A-Z</option>
               <option value="mode">Type</option>
             </Select>
@@ -510,6 +531,8 @@ export default function HistoryPage() {
                   selectionMode={selectionMode}
                   isSelected={selectedIds.has(rowKey(run))}
                   onToggle={() => toggleRowSelection(rowKey(run))}
+                  onDelete={() => handleDeleteRun(run.run_id)}
+                  isDeleting={deleteRunMutation.isPending && deleteRunMutation.variables === run.run_id}
                 />
               ))}
             </ul>
@@ -525,6 +548,8 @@ export default function HistoryPage() {
           canCompare={resolvedProgramCount >= 2}
           onCompare={() => setReviewOpen(true)}
           onCancel={exitSelectionMode}
+          onDeleteSelected={handleDeleteSelected}
+          isDeletingSelected={deleteRunMutation.isPending}
         />
       )}
 
@@ -549,11 +574,15 @@ function HistoryRow({
   selectionMode,
   isSelected,
   onToggle,
+  onDelete,
+  isDeleting,
 }: {
   run: RunHistoryEntry;
   selectionMode: boolean;
   isSelected: boolean;
   onToggle: () => void;
+  onDelete: () => void;
+  isDeleting: boolean;
 }) {
   const isCompare = run.mode === "compare";
   const Icon = isCompare ? GitCompareArrows : Sparkles;
@@ -649,11 +678,12 @@ function HistoryRow({
     </>
   );
 
-  const gridClass = cn(
-    "gap-3 px-4 py-4 transition",
-    selectionMode
-      ? "grid lg:grid-cols-[32px_1.5fr_150px_140px_130px] lg:items-center"
-      : "group grid lg:grid-cols-[1.5fr_150px_140px_130px_100px] lg:items-center",
+  const selectionGridClass = cn(
+    "gap-3 px-4 py-4 transition grid lg:grid-cols-[32px_1.5fr_150px_140px_130px] lg:items-center",
+  );
+
+  const linkGridClass = cn(
+    "gap-3 pl-4 py-4 transition grid flex-1 min-w-0 lg:grid-cols-[1.5fr_150px_140px_130px_100px] lg:items-center",
   );
 
   if (selectionMode) {
@@ -665,7 +695,7 @@ function HistoryRow({
           onClick={onToggle}
           onKeyDown={(e) => e.key === "Enter" && onToggle()}
           className={cn(
-            gridClass,
+            selectionGridClass,
             "cursor-pointer select-none hover:bg-soft-grey/35",
             isSelected && "bg-teal/5 ring-1 ring-inset ring-teal/25",
           )}
@@ -677,13 +707,23 @@ function HistoryRow({
   }
 
   return (
-    <li>
+    <li className="group flex items-center hover:bg-soft-grey/35 transition">
       <Link
         href={detailHref(run)}
-        className={cn(gridClass, "hover:bg-soft-grey/35")}
+        className={linkGridClass}
       >
         {innerContent}
       </Link>
+      <div className="flex shrink-0 items-center pr-2">
+        <button
+          onClick={onDelete}
+          disabled={isDeleting}
+          className="flex h-7 w-7 items-center justify-center rounded-full text-ink/25 opacity-0 transition group-hover:opacity-100 hover:bg-red/10 hover:text-red disabled:cursor-not-allowed"
+          title="Delete this analysis"
+        >
+          {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+        </button>
+      </div>
     </li>
   );
 }
@@ -696,19 +736,23 @@ function SelectionBar({
   canCompare,
   onCompare,
   onCancel,
+  onDeleteSelected,
+  isDeletingSelected,
 }: {
   selectedCount: number;
   programCount: number;
   canCompare: boolean;
   onCompare: () => void;
   onCancel: () => void;
+  onDeleteSelected: () => void;
+  isDeletingSelected: boolean;
 }) {
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-white/95 shadow-[0_-4px_20px_rgba(0,0,0,0.08)] backdrop-blur-sm">
       <div className="mx-auto flex max-w-7xl items-center gap-4 px-5 py-4">
         <div className="min-w-0 flex-1">
           {selectedCount === 0 ? (
-            <p className="text-sm text-ink/50">Select runs from the list above to compare them.</p>
+            <p className="text-sm text-ink/50">Select runs from the list above to compare or delete them.</p>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-pill bg-teal/10 px-3 py-1 text-sm font-semibold text-teal">
@@ -733,6 +777,18 @@ function SelectionBar({
             <X className="h-4 w-4" />
             Cancel
           </Button>
+          {selectedCount > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isDeletingSelected}
+              onClick={onDeleteSelected}
+              className="border-red/30 text-red hover:bg-red/5 hover:border-red/50"
+            >
+              {isDeletingSelected ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Delete {selectedCount > 1 ? `${selectedCount} runs` : "run"}
+            </Button>
+          )}
           <Button
             size="sm"
             disabled={!canCompare}

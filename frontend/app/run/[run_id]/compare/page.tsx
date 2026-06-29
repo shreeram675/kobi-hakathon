@@ -843,7 +843,7 @@ function QualityCard({
         !isBest && "border-line",
       )}
     >
-      <DataQualityGauge value={value} label="Data quality" size={140} />
+      <DataQualityGauge value={value} label="Content Extracted" size={140} />
       <div className="min-w-0">
         {isBest && (
           <span className="mb-1 inline-flex items-center gap-1 rounded-pill bg-green/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-green">

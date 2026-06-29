@@ -1812,6 +1812,26 @@ def get_run(run_id: str) -> dict[str, Any]:
     return build_run_response(record)
 
 
+def _do_delete_run(run_id: str) -> dict[str, Any]:
+    with STORE_LOCK:
+        STORE.pop(run_id, None)
+    deleted = _db.delete_run(_db_conn, run_id)
+    snapshots = _db.list_program_snapshots_by_run_id(_db_conn, run_id)
+    for snap in snapshots:
+        _db.delete_run_snapshot(_db_conn, snap["program_name_normalized"])
+    return {"ok": True, "deleted": deleted}
+
+@app.delete("/api/run/{run_id}", status_code=200)
+def delete_run(run_id: str) -> dict[str, Any]:
+    """Remove a run from the in-memory store and the persistent DB."""
+    return _do_delete_run(run_id)
+
+@app.post("/api/run/{run_id}/delete", status_code=200)
+def delete_run_post(run_id: str) -> dict[str, Any]:
+    """POST alias for DELETE — used by Next.js proxy which has issues with DELETE method."""
+    return _do_delete_run(run_id)
+
+
 @app.post("/api/run/{run_id}/clarify")
 def clarify(run_id: str, body: ClarifyRequest) -> dict[str, Any]:
     with STORE_LOCK:

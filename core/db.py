@@ -417,6 +417,29 @@ def find_program_snapshot_by_run_id(conn: sqlite3.Connection, run_id: str) -> di
     return None
 
 
+def delete_run(conn: sqlite3.Connection, run_id: str) -> bool:
+    """Delete a run and its associated claims, conflicts, briefs, and conversations. Returns True if deleted."""
+    with _WRITE_LOCK:
+        conn.execute("DELETE FROM claims WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM conflicts WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM briefs WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM conversations WHERE run_id = ?", (run_id,))
+        cursor = conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+        conn.commit()
+    return cursor.rowcount > 0
+
+
+def delete_run_snapshot(conn: sqlite3.Connection, program_name_normalized: str) -> bool:
+    """Delete a run_snapshot by normalized program name. Returns True if deleted."""
+    with _WRITE_LOCK:
+        cursor = conn.execute(
+            "DELETE FROM run_snapshots WHERE program_name_normalized = ?",
+            (program_name_normalized,),
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
 def list_program_snapshots_by_run_id(conn: sqlite3.Connection, run_id: str) -> list[dict]:
     """Return all stored snapshots whose serialized state references the given run id."""
     rows = conn.execute(

@@ -5,17 +5,20 @@ import Link from "next/link";
 import {
   ArrowUpRight,
   History,
+  Loader2,
   Sparkles,
   GitCompareArrows,
   MessagesSquare,
   CheckCircle2,
-  Loader2,
   Database,
+  Trash2,
 } from "lucide-react";
 import { Badge, type Tone } from "@/components/ui/badge";
 import { useRunHistory } from "@/lib/hooks";
+import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { pct, relativeTime, truncate } from "@/lib/format";
-import { getRecentSearches, type RecentSearch } from "@/lib/cache-storage";
+import { getRecentSearches, removeRecentSearch, type RecentSearch } from "@/lib/cache-storage";
+import { deleteRun } from "@/lib/api";
 import type { RunHistoryEntry, RunMode } from "@/lib/types";
 
 const MODE_TONE: Record<RunMode, Tone> = {
@@ -32,6 +35,7 @@ const MODE_ICON: Record<RunMode, typeof Sparkles> = {
 
 export function RecentRunsList() {
   const { data: serverRuns, isLoading, isError } = useRunHistory();
+  const qc = useQueryClient();
 
   // localStorage fallback — populated client-side on mount only
   const [localRuns, setLocalRuns] = useState<RunHistoryEntry[]>([]);
@@ -55,6 +59,21 @@ export function RecentRunsList() {
     if (serverRuns && serverRuns.length > 0) return serverRuns;
     return localRuns;
   }, [serverRuns, localRuns]);
+
+  const deleteRunMutation = useMutation({
+    mutationFn: (runId: string) => deleteRun(runId),
+    onSuccess: (_data, runId) => {
+      removeRecentSearch(runId);
+      setLocalRuns((prev) => prev.filter((r) => r.run_id !== runId));
+      qc.invalidateQueries({ queryKey: ["runs"] });
+      qc.invalidateQueries({ queryKey: ["run-history"] });
+    },
+    onError: (_err, runId) => {
+      // Even if backend fails, remove from localStorage
+      removeRecentSearch(runId);
+      setLocalRuns((prev) => prev.filter((r) => r.run_id !== runId));
+    },
+  });
 
   const isEmpty = !isLoading && runs.length === 0;
 
@@ -103,12 +122,13 @@ export function RecentRunsList() {
           <ul className="divide-y divide-line">
             {runs.map((run) => {
               const Icon = MODE_ICON[run.mode] ?? Sparkles;
-              const displayName = run.program_name ?? run.user_input;
+              const name = run.program_name ?? run.user_input;
+              const isDeleting = deleteRunMutation.isPending && deleteRunMutation.variables === run.run_id;
               return (
-                <li key={run.run_id}>
+                <li key={run.run_id} className="group flex items-center hover:bg-soft-grey/35 transition-colors">
                   <Link
                     href={`/run/${run.run_id}`}
-                    className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-soft-grey/35"
+                    className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3"
                   >
                     <span
                       className={`hidden sm:flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
@@ -124,7 +144,7 @@ export function RecentRunsList() {
 
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[13px] font-medium text-ink leading-tight">
-                        {truncate(displayName, 68)}
+                        {truncate(name, 68)}
                       </p>
                       {run.program_name && run.program_name !== run.user_input && (
                         <p className="mt-0.5 truncate text-[10px] text-ink/35">
@@ -172,6 +192,16 @@ export function RecentRunsList() {
 
                     <ArrowUpRight className="h-4 w-4 shrink-0 text-ink/25 transition-colors group-hover:text-teal" />
                   </Link>
+                  <div className="flex shrink-0 items-center pr-2">
+                    <button
+                      onClick={() => deleteRunMutation.mutate(run.run_id)}
+                      disabled={isDeleting}
+                      className="flex h-7 w-7 items-center justify-center rounded-full text-ink/25 opacity-0 transition group-hover:opacity-100 hover:bg-red/10 hover:text-red disabled:cursor-not-allowed"
+                      title="Delete this analysis"
+                    >
+                      {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
                 </li>
               );
             })}

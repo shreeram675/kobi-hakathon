@@ -81,6 +81,11 @@ export async function stopRun(runId: string): Promise<{ ok: boolean }> {
   return asJson<{ ok: boolean }>(res);
 }
 
+export async function deleteRun(runId: string): Promise<{ ok: boolean; deleted: boolean }> {
+  const res = await fetch(`/api/run/${runId}/delete`, { method: "POST" });
+  return asJson<{ ok: boolean; deleted: boolean }>(res);
+}
+
 export async function generateComparisonBrief(runId: string): Promise<import("./types").ComparisonBrief> {
   const res = await fetch(`/api/run/${runId}/generate-brief`, { method: "POST" });
   return asJson(res);
