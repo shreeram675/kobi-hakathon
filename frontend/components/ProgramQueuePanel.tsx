@@ -9,7 +9,7 @@ interface ProgramQueuePanelProps {
   info: ComparisonRunInfo;
   /** Current stage_status from the polled run (for the in-progress program). */
   currentStageStatus: Record<string, StageStatus>;
-  overallStatus: "running" | "done" | "error" | "clarification_needed" | "cancelled";
+  overallStatus: "running" | "done" | "error" | "clarification_needed" | "cache_hit_pending" | "cancelled";
 }
 
 const STATUS_CONFIG: Record<

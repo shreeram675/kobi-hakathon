@@ -135,6 +135,9 @@ class RunRecord:
         self.comparison_conversation: list[dict[str, Any]] = []
         self.lock = threading.Lock()
         self.clarification_event = threading.Event()
+        self.cache_decision_event = threading.Event()
+        self.cache_decision: str | None = None  # "use_cache" | "fresh"
+        self.pending_cache_snapshot: dict | None = None
         self.stop_event = threading.Event()
 
         # Multi-program comparison support
@@ -182,6 +185,23 @@ def build_run_response(record: RunRecord) -> dict[str, Any]:
         result["stage_status"] = dict(record.stage_status)
         result["active_stage"] = record.active_stage
         result["status"] = record.run_status
+        if record.pending_cache_snapshot is not None:
+            snap_state = json.loads(record.pending_cache_snapshot.get("program_state_json", "{}"))
+            created_at_str = record.pending_cache_snapshot.get("created_at")
+            age_days: int | None = None
+            if created_at_str:
+                try:
+                    from datetime import datetime, timezone
+                    created_dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                    age_days = (datetime.now(timezone.utc) - created_dt).days
+                except Exception:
+                    pass
+            result["cache_hit"] = {
+                "program_name": snap_state.get("program_name") or record.user_input,
+                "brand": snap_state.get("brand"),
+                "run_date": created_at_str,
+                "age_days": age_days,
+            }
         result["conversation"] = list(record.conversation)
         result["cost_report"] = record.cost_ledger.to_dict()
         result["comparison_conversation"] = list(record.comparison_conversation)
@@ -595,6 +615,31 @@ def _run_single_pipeline(record: RunRecord) -> bool:
         else:
             _mark(record, "input_validator", "error")
             return False
+
+    # 1b. Cache check — now that we know the resolved program name
+    if not record.force_fresh:
+        resolved_name = record.state.get("program_name") or record.user_input
+        snapshot = _db.find_program_snapshot(_db_conn, resolved_name)
+        if snapshot:
+            with record.lock:
+                record.pending_cache_snapshot = snapshot
+                record.run_status = "cache_hit_pending"
+            record.cache_decision_event.clear()
+            if not record.cache_decision_event.wait(timeout=300):
+                _mark(record, "input_validator", "error")
+                return False
+            if _stopped(record):
+                return False
+            with record.lock:
+                decision = record.cache_decision
+                record.run_status = "running"
+            if decision == "use_cache":
+                with record.lock:
+                    snap = record.pending_cache_snapshot
+                if snap:
+                    _restore_single_from_cache(record, snap)
+                    _persist_run_summary(record)
+                return True
 
     # 2. Query Generator
     if _stopped(record):
@@ -1768,15 +1813,6 @@ def create_run(body: CreateRunBody) -> dict[str, str]:
         STORE[run_id] = record
     _persist_run_summary(record)
 
-    # Single-mode cache short-circuit: restore immediately without starting pipeline thread
-    if not body.mock and not body.force_fresh and mode == "single":
-        snapshot = _db.find_program_snapshot(_db_conn, body.user_input.strip())
-        if snapshot:
-            _restore_single_from_cache(record, snapshot)
-            _persist_run_summary(record)
-            logger.info("[%s] served from cache for %r", run_id, body.user_input.strip())
-            return {"run_id": run_id}
-
     target = _run_mock_pipeline if body.mock else run_pipeline
     threading.Thread(target=target, args=(record,), daemon=True).start()
     return {"run_id": run_id}
@@ -1852,6 +1888,26 @@ def clarify(run_id: str, body: ClarifyRequest) -> dict[str, Any]:
         record.state["validation_messages"] = messages
 
     record.clarification_event.set()
+    return {"ok": True}
+
+
+class CacheDecisionRequest(_PydanticBase):
+    decision: str  # "use_cache" | "fresh"
+
+
+@app.post("/api/run/{run_id}/cache-decision")
+def cache_decision(run_id: str, body: CacheDecisionRequest) -> dict[str, Any]:
+    with STORE_LOCK:
+        record = STORE.get(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if body.decision not in ("use_cache", "fresh"):
+        raise HTTPException(status_code=400, detail="decision must be 'use_cache' or 'fresh'")
+    with record.lock:
+        if record.run_status != "cache_hit_pending":
+            raise HTTPException(status_code=400, detail="run is not waiting for a cache decision")
+        record.cache_decision = body.decision
+    record.cache_decision_event.set()
     return {"ok": True}
 
 
@@ -1991,9 +2047,10 @@ def stop_run(run_id: str) -> dict[str, Any]:
     if record is None:
         raise HTTPException(status_code=404, detail="run not found")
     with record.lock:
-        if record.run_status not in ("running", "clarification_needed"):
+        if record.run_status not in ("running", "clarification_needed", "cache_hit_pending"):
             raise HTTPException(status_code=400, detail="run is not in progress")
         record.run_status = "cancelled"
     record.stop_event.set()
     record.clarification_event.set()  # unblock any waiting clarification
+    record.cache_decision_event.set()  # unblock any waiting cache decision
     return {"ok": True}

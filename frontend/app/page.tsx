@@ -19,11 +19,8 @@ import { RunModeTab } from "@/components/RunModeTab";
 import { RecentRunsList } from "@/components/RecentRunsList";
 import { Button } from "@/components/ui/button";
 import { Textarea, Input } from "@/components/ui/textarea";
-import { CacheDecisionModal, type CacheDecision } from "@/components/CacheDecisionModal";
-import { CompareCacheModal, type CompareCacheDecision } from "@/components/CompareCacheModal";
 import { useCreateRun } from "@/lib/hooks";
-import { checkCache, checkCacheMulti } from "@/lib/api";
-import type { CacheCheckResult, CompareCacheCheckItem, CreateRunBody, RunMode } from "@/lib/types";
+import type { CreateRunBody, RunMode } from "@/lib/types";
 import { cn } from "@/lib/format";
 
 const EXAMPLES = ["Marriott Bonvoy", "Hilton Honors", "Delta SkyMiles", "World of Hyatt"];
@@ -64,18 +61,6 @@ export default function HomePage() {
   const [mode, setMode] = useState<RunMode>("single");
   const [input, setInput] = useState("");
   const [programs, setPrograms] = useState<string[]>(["", ""]);
-  const [isChecking, setIsChecking] = useState(false);
-
-  const [singleModal, setSingleModal] = useState<{
-    result: CacheCheckResult;
-    body: CreateRunBody;
-  } | null>(null);
-
-  const [compareModal, setCompareModal] = useState<{
-    results: CompareCacheCheckItem[];
-    body: CreateRunBody;
-  } | null>(null);
-
   const create = useCreateRun();
   const detail = MODE_DETAIL[mode];
 
@@ -97,53 +82,14 @@ export default function HomePage() {
     setPrograms((prev) => prev.map((p, i) => (i === idx ? value : p)));
   }
 
-  async function handleSubmit() {
-    if (!canSubmit || create.isPending || isChecking) return;
-    setIsChecking(true);
-    try {
-      if (mode === "compare") {
-        const cleaned = programs.map((p) => p.trim()).filter(Boolean);
-        const body: CreateRunBody = { user_input: cleaned[0], mode, programs: cleaned };
-        const results = await checkCacheMulti(cleaned);
-        if (results.some((r) => r.found)) {
-          setCompareModal({ results, body });
-          return;
-        }
-        create.mutate(body);
-      } else {
-        const body: CreateRunBody = { user_input: input.trim(), mode };
-        const result = await checkCache(input.trim());
-        if (result.found) {
-          setSingleModal({ result, body });
-          return;
-        }
-        create.mutate(body);
-      }
-    } catch {
-      // Cache check failed — run without cache modal
-      if (mode === "compare") {
-        const cleaned = programs.map((p) => p.trim()).filter(Boolean);
-        create.mutate({ user_input: cleaned[0], mode, programs: cleaned });
-      } else {
-        create.mutate({ user_input: input.trim(), mode });
-      }
-    } finally {
-      setIsChecking(false);
+  function handleSubmit() {
+    if (!canSubmit || create.isPending) return;
+    if (mode === "compare") {
+      const cleaned = programs.map((p) => p.trim()).filter(Boolean);
+      create.mutate({ user_input: cleaned[0], mode, programs: cleaned });
+    } else {
+      create.mutate({ user_input: input.trim(), mode });
     }
-  }
-
-  function handleSingleDecision(choice: CacheDecision) {
-    if (!singleModal) return;
-    if (choice === "cancel") { setSingleModal(null); return; }
-    create.mutate({ ...singleModal.body, force_fresh: choice === "fresh" });
-    setSingleModal(null);
-  }
-
-  function handleCompareDecision(choice: CompareCacheDecision) {
-    if (!compareModal) return;
-    if (choice === "cancel") { setCompareModal(null); return; }
-    create.mutate({ ...compareModal.body, force_fresh: choice === "fresh" });
-    setCompareModal(null);
   }
 
   function fillExample(ex: string) {
@@ -155,7 +101,7 @@ export default function HomePage() {
     }
   }
 
-  const busy = create.isPending || isChecking;
+  const busy = create.isPending;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -303,7 +249,7 @@ export default function HomePage() {
                 ) : (
                   <Sparkles className="h-3.5 w-3.5" />
                 )}
-                {isChecking ? "Checking…" : detail.cta}
+                {detail.cta}
               </Button>
             </div>
 
@@ -325,21 +271,6 @@ export default function HomePage() {
         Kobie Loyalty Intelligence · AI-extracted, source-cited competitive data
       </footer>
 
-      {singleModal && (
-        <CacheDecisionModal
-          open
-          programQuery={singleModal.body.user_input}
-          result={singleModal.result}
-          onDecision={handleSingleDecision}
-        />
-      )}
-      {compareModal && (
-        <CompareCacheModal
-          open
-          results={compareModal.results}
-          onDecision={handleCompareDecision}
-        />
-      )}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
   fetchRunHistory,
   fetchRuns,
   generateComparisonBrief,
+  postCacheDecision,
   postCompareConverse,
   postConverse,
   postClarify,
@@ -39,6 +40,16 @@ export function useClarify(runId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (answer: string) => postClarify(runId, answer),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["run", runId] });
+    },
+  });
+}
+
+export function useCacheDecision(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (decision: "use_cache" | "fresh") => postCacheDecision(runId, decision),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["run", runId] });
     },

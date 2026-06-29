@@ -28,8 +28,9 @@ import { ErrorRail } from "@/components/ErrorRail";
 import { ConverseThread } from "@/components/ConverseThread";
 import { SingleProgramBriefPanel } from "@/components/SingleProgramBriefPanel";
 import { ClarificationPanel } from "@/components/ClarificationPanel";
+import { CacheDecisionModal } from "@/components/CacheDecisionModal";
 import { ProgramQueuePanel } from "@/components/ProgramQueuePanel";
-import { useRun, useStopRun, useRetryRun } from "@/lib/hooks";
+import { useRun, useStopRun, useRetryRun, useCacheDecision } from "@/lib/hooks";
 import { DownloadPDFButton } from "@/components/DownloadPDFButton";
 import { STAGE_IDS, PIPELINE_STAGES, type StageId } from "@/lib/schema";
 import { cn, elapsed } from "@/lib/format";
@@ -61,6 +62,7 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
   const { data: state, isLoading, isError } = useRun(runId);
   const stop = useStopRun(runId);
   const retry = useRetryRun();
+  const cacheDecision = useCacheDecision(runId);
   const [focused, setFocused] = useState<StageId | null>(null);
   const [selectedProgramIdx, setSelectedProgramIdx] = useState(0);
   const [, setTick] = useState(0);
@@ -106,7 +108,7 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
   }, []);
 
   useEffect(() => {
-    if (state?.status !== "running" && state?.status !== "clarification_needed") return;
+    if (state?.status !== "running" && state?.status !== "clarification_needed" && state?.status !== "cache_hit_pending") return;
     const t = setInterval(() => setTick((v) => v + 1), 1000);
     return () => clearInterval(t);
   }, [state?.status]);
@@ -433,6 +435,24 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
           </div>
         </div>
       </div>
+
+      {state.status === "cache_hit_pending" && state.cache_hit && (
+        <CacheDecisionModal
+          open
+          programQuery={state.user_input}
+          result={{
+            found: true,
+            program_name: state.cache_hit.program_name,
+            brand: state.cache_hit.brand ?? undefined,
+            age_days: state.cache_hit.age_days ?? undefined,
+            run_datetime: state.cache_hit.run_date ?? undefined,
+          }}
+          onDecision={(choice) => {
+            if (choice === "cancel") return;
+            cacheDecision.mutate(choice === "view" ? "use_cache" : "fresh");
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -590,6 +610,8 @@ function StatusBar({
         )}
         {state.status === "clarification_needed" ? (
           <Badge tone="blue" dot>Awaiting clarification</Badge>
+        ) : state.status === "cache_hit_pending" ? (
+          <Badge tone="blue" dot>Previous analysis found</Badge>
         ) : isRunning ? (
           <Badge tone="teal" dot>
             <Loader2 className="h-3 w-3 animate-spin" />

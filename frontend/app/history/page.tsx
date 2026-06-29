@@ -49,6 +49,7 @@ const STATUS_TONE: Record<RunHistoryEntry["status"], Tone> = {
   running: "teal",
   error: "red",
   clarification_needed: "blue",
+  cache_hit_pending: "blue",
   cancelled: "amber",
 };
 
@@ -57,6 +58,7 @@ const STATUS_LABEL: Record<RunHistoryEntry["status"], string> = {
   running: "Running",
   error: "Error",
   clarification_needed: "Needs clarification",
+  cache_hit_pending: "Previous analysis found",
   cancelled: "Stopped",
 };
 

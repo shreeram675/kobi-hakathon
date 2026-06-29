@@ -102,3 +102,15 @@ export async function postClarify(
   });
   return asJson<{ ok: boolean }>(res);
 }
+
+export async function postCacheDecision(
+  runId: string,
+  decision: "use_cache" | "fresh",
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/run/${runId}/cache-decision`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision }),
+  });
+  return asJson<{ ok: boolean }>(res);
+}
