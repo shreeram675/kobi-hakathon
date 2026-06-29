@@ -113,6 +113,9 @@ RULES:
 - For every field that lists a REJECTED value, you MUST acknowledge it: state the rejected value, its source, and why it was rejected
 - When a field shows "REJECTED" data, the reason often reveals whether the data was stale, lower-confidence, or from a less authoritative source — explain this nuance
 - Do NOT reject one source entirely when both may be valid (e.g. one is recent data, one is older) — instead acknowledge the discrepancy with context
+- Fields marked "[varies by context]" contain ALL_VALUES entries showing all simultaneously-valid rates. Use these to say "earns X on Y and Z on W" rather than a single flat number
+- Fields marked "[range across sources]" list values from multiple sources that may apply to different categories — describe the full range in your insight
+- Fields marked "[combined from multiple sources]" are union-merged lists — treat the merged value as the complete picture
 - source_urls arrays must contain the full URLs (https://...), not just domains
 - Target total brief length: 500-1000 words across all fields combined
 - Output ONLY the JSON object. No preamble.\
@@ -132,7 +135,33 @@ def _build_program_block(name: str, field_report: FieldReport) -> str:
         sources_str = ""
         if entry.source_urls:
             sources_str = "\n      Sources: " + ", ".join(entry.source_urls)
-        lines_for_field = [f"    {field_label}: {entry.value} (conf={conf_label}){flag}{sources_str}"]
+
+        # Show conflict_type annotation when values were merged/ranged
+        conflict_note = ""
+        ct = getattr(entry, "conflict_type", None)
+        if ct and ct != "contradictory":
+            ct_labels = {
+                "complementary": "varies by context",
+                "range": "range across sources",
+                "union": "combined from multiple sources",
+                "recency": "most recent value kept",
+                "majority_vote": "majority consensus",
+            }
+            conflict_note = f" [{ct_labels.get(ct, ct)}]"
+
+        lines_for_field = [f"    {field_label}: {entry.value} (conf={conf_label}){flag}{conflict_note}{sources_str}"]
+
+        # Show all simultaneously-valid values for non-contradictory resolutions
+        all_vals = getattr(entry, "all_values", None)
+        if all_vals and ct and ct != "contradictory":
+            for av in all_vals:
+                av_val = av.get("value", "")
+                av_ctx = av.get("context")
+                av_url = av.get("source_url", "")
+                ctx_str = f" (context: {av_ctx})" if av_ctx else ""
+                src_str = f" | source: {av_url}" if av_url else ""
+                lines_for_field.append(f"      ALL_VALUES: {av_val}{ctx_str}{src_str}")
+
         for rej in (entry.rejected_alternatives or []):
             rej_val = rej.get("value", "")
             rej_urls = rej.get("source_urls") or []

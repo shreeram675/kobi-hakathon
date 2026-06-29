@@ -64,6 +64,8 @@ export const RESOLUTION_ACCENT: Record<ConflictResolution, Accent> = {
   auto_resolved: { fg: "green", hex: TOKENS.green, soft: TOKENS.softGreen, label: "Auto-resolved" },
   debate_required: { fg: "amber", hex: TOKENS.amber, soft: TOKENS.softAmber, label: "Debate required" },
   manual_review_needed: { fg: "red", hex: TOKENS.red, soft: TOKENS.softRed, label: "Manual review" },
+  merged: { fg: "teal", hex: TOKENS.teal, soft: "#e0f4f4", label: "Merged" },
+  field_type_resolved: { fg: "blue", hex: TOKENS.blue, soft: "#e6effb", label: "Strategy resolved" },
 };
 
 export const FIELD_REPORT_ACCENT: Record<FieldReportStatus, Accent> = {

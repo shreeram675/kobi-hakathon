@@ -34,7 +34,9 @@ export type FieldReportStatus =
 export type ConflictResolution =
   | "auto_resolved"
   | "debate_required"
-  | "manual_review_needed";
+  | "manual_review_needed"
+  | "merged"
+  | "field_type_resolved";
 
 export type ComparisonOutcome =
   | "factual_mismatch"
@@ -197,6 +199,8 @@ export interface FieldReportEntry {
   confidence: number | null;
   corroboration_count: number;
   rejected_alternatives?: Array<{ value: unknown; source_urls: string[]; reason: string }>;
+  all_values?: Array<{ value: string; source_url: string | null; context: string | null }>;
+  conflict_type?: "contradictory" | "complementary" | "range" | "union" | "recency" | "majority_vote";
 }
 
 export interface FieldReport {
@@ -256,7 +260,9 @@ export interface DebateRound {
 export interface AdjudicatedClaim {
   conflict_id: string;
   field_path: string;
+  field_name?: string;
   resolution_status: ConflictResolution;
+  resolution?: string;
   winning_claim_id: string | null;
   decision: string;
   rounds: DebateRound[];
@@ -265,6 +271,10 @@ export interface AdjudicatedClaim {
   value_b?: string | null;
   url_a?: string | null;
   url_b?: string | null;
+  all_values?: Array<{ value: string; source_url: string | null; context: string | null }>;
+  conflict_type?: "contradictory" | "complementary" | "range" | "union" | "recency" | "majority_vote";
+  winner?: string;
+  strategy?: string;
 }
 
 export interface HumanReviewItem {

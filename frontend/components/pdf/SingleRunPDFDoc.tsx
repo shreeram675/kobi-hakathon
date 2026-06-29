@@ -190,6 +190,11 @@ function FieldRowView({ entry, rowIdx }: { entry: FieldReportEntry; rowIdx: numb
       </View>
       <View style={s.fieldValueCol}>
         <Text style={s.fieldValue}>{valStr}</Text>
+        {entry.conflict_type && entry.conflict_type !== 'contradictory' && entry.all_values && entry.all_values.length > 1 && (
+          <Text style={[s.fieldMeta, { color: '#0f7c7d', fontStyle: 'italic' }]}>
+            {`[${entry.conflict_type}] ` + entry.all_values.map(av => av.context ? `${av.context}: ${av.value}` : av.value).join('  ·  ')}
+          </Text>
+        )}
         {confPct != null && (
           <Text style={[s.fieldMeta, { color: confColor(entry.confidence) }]}>
             {`Confidence: ${confPct}%`}

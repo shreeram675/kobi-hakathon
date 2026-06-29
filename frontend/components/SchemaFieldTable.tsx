@@ -27,6 +27,8 @@ interface Row {
   confidence: number | null;
   status: ClaimStatus;
   sources: string[];
+  all_values?: Array<{ value: string; source_url: string | null; context: string | null }>;
+  conflict_type?: string;
 }
 
 function buildRows(report: FieldReport | null, claims: Claim[]): Map<string, Row> {
@@ -43,6 +45,8 @@ function buildRows(report: FieldReport | null, claims: Claim[]): Map<string, Row
         confidence: entry?.confidence ?? claim?.confidence ?? null,
         status: claim?.status ?? "null",
         sources: entry?.source_urls ?? (claim?.source_url ? [claim.source_url] : []),
+        all_values: entry?.all_values,
+        conflict_type: entry?.conflict_type,
       });
     }
   }
@@ -175,7 +179,22 @@ function FieldRow({ row }: { row: Row }) {
         {row.value == null ? (
           <span className="text-ink/30">—</span>
         ) : (
-          <span className="line-clamp-2">{renderValue(row.value)}</span>
+          <div>
+            <span className="line-clamp-2">{renderValue(row.value)}</span>
+            {row.conflict_type && row.conflict_type !== "contradictory" && row.all_values && row.all_values.length > 1 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {row.all_values.map((av, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1 rounded bg-teal/10 px-1.5 py-0.5 text-[10px] text-teal"
+                    title={av.source_url ?? undefined}
+                  >
+                    {av.context ? `${av.context}: ` : ""}{av.value}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </div>
       {/* Confidence */}

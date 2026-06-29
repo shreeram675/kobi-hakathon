@@ -174,19 +174,22 @@ REBUTTAL B:
 {rebuttal_b}
 
 Evaluate in this exact order:
-1. HALLUCINATION SCAN — compare every statement in each argument and rebuttal against AVAILABLE METADATA. Any fact not traceable to AVAILABLE METADATA is a hallucination. Mark hallucinated arguments/rebuttals in hallucination_detected and treat them as if they were never said.
-2. Apply the volatility weights — which metadata signal dominates for this field?
-3. Evaluate the original arguments using only non-hallucinated statements — which made the stronger grounded evidence case?
-4. Evaluate the rebuttals — specific and grounded beats vague. Any rebuttal flagged in Step 1 must be scored "hallucinated" in rebuttal_assessment and fully discarded from Step 3-4 reasoning.
-5. Combine all surviving signals into a verdict.
-6. Return FLAG ONLY when the metadata itself is genuinely insufficient to distinguish the claims after all steps above — NOT simply because arguments were weak or unconvincing.
+1. COMPLEMENTARY CHECK — before anything else: could BOTH values be simultaneously correct in different contexts (e.g. different purchase categories, different tiers, different time periods)? If yes, return MERGE with a synthesized value.
+2. HALLUCINATION SCAN — compare every statement in each argument and rebuttal against AVAILABLE METADATA. Any fact not traceable to AVAILABLE METADATA is a hallucination. Mark hallucinated arguments/rebuttals in hallucination_detected and treat them as if they were never said.
+3. Apply the volatility weights — which metadata signal dominates for this field?
+4. Evaluate the original arguments using only non-hallucinated statements — which made the stronger grounded evidence case?
+5. Evaluate the rebuttals — specific and grounded beats vague. Any rebuttal flagged in Step 2 must be scored "hallucinated" in rebuttal_assessment and fully discarded from reasoning.
+6. Combine all surviving signals into a verdict.
+7. Return FLAG ONLY when the metadata itself is genuinely insufficient to distinguish the claims after all steps above — NOT simply because arguments were weak or unconvincing.
 
 Output ONLY valid JSON, no preamble, no markdown fences:
 {{
-    "winner": "A" or "B" or "FLAG",
-    "winning_value": "<chosen value or null if FLAG>",
-    "deciding_factor": "recency" or "authority" or "corroboration" or "rebuttal_quality" or "unresolvable",
+    "winner": "A" or "B" or "FLAG" or "MERGE",
+    "winning_value": "<chosen value, synthesized merged statement if MERGE, or null if FLAG>",
+    "deciding_factor": "recency" or "authority" or "corroboration" or "rebuttal_quality" or "unresolvable" or "complementary",
     "reasoning": "<one sentence naming the specific deciding factor>",
+    "context_a": "<purchase category/tier/context where claim A applies, or null>",
+    "context_b": "<purchase category/tier/context where claim B applies, or null>",
     "rebuttal_assessment": {{
         "A_rebuttal": "strong" or "weak" or "hallucinated",
         "B_rebuttal": "strong" or "weak" or "hallucinated"
@@ -198,6 +201,29 @@ Output ONLY valid JSON, no preamble, no markdown fences:
         "rebuttal_b": false
     }},
     "confidence_adjustment": <float between -0.10 and +0.10>
+}}"""
+
+
+COMPLEMENTARY_CLASSIFIER_PROMPT = """You are classifying whether two loyalty program field values represent a GENUINE CONFLICT or COMPLEMENTARY information.
+
+COMPLEMENTARY: Both values can be simultaneously true — they apply to different contexts (purchase categories, tiers, time periods, partner types).
+  Examples: "1 mile per $1 on all purchases" vs "2 miles per $1 on flights" → complementary (different categories)
+            "Gold: 25 nights" vs "Platinum: 50 nights" → complementary (different tiers)
+
+CONTRADICTORY: Only one value can be correct — same context, one must be wrong.
+  Examples: "1 mile per $1" vs "0.5 miles per $1" (no category qualifier on either) → contradictory
+            "Points expire after 12 months" vs "Points expire after 24 months" → contradictory
+
+FIELD: {field_name}
+VALUE A: {value_a}
+VALUE B: {value_b}
+
+Output ONLY valid JSON, no preamble:
+{{
+    "conflict_type": "complementary" or "contradictory",
+    "merged_value": "<if complementary: a clear synthesized statement combining both values; if contradictory: null>",
+    "context_a": "<specific context/category/tier where value A applies, or null if general>",
+    "context_b": "<specific context/category/tier where value B applies, or null if general>"
 }}"""
 
 
@@ -372,6 +398,41 @@ def parse_judge_output(raw: str) -> dict[str, Any]:
         }
 
 
+async def classify_conflict_type(conflict: dict[str, Any]) -> dict[str, Any]:
+    """Pre-flight LLM check: complementary vs. contradictory.
+
+    Returns a dict with keys: conflict_type, merged_value, context_a, context_b.
+    Falls back to contradictory on any parse error so debate still runs.
+    """
+    value_a = str(conflict["claim_a"].get("value") or "")
+    value_b = str(conflict["claim_b"].get("value") or "")
+    prompt = COMPLEMENTARY_CLASSIFIER_PROMPT.format(
+        field_name=conflict["field_name"],
+        value_a=value_a,
+        value_b=value_b,
+    )
+    log = logging.getLogger("kobie.debate")
+    try:
+        raw = await call_groq(prompt, temperature=0.0, max_tokens=200)
+        text = raw.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+        result = json.loads(text)
+        ct = str(result.get("conflict_type") or "contradictory").lower()
+        if ct not in ("complementary", "contradictory"):
+            ct = "contradictory"
+        return {
+            "conflict_type": ct,
+            "merged_value": result.get("merged_value"),
+            "context_a": result.get("context_a"),
+            "context_b": result.get("context_b"),
+        }
+    except Exception as exc:
+        log.warning("classify_conflict_type failed for %s: %s — defaulting to contradictory", conflict["field_name"], exc)
+        return {"conflict_type": "contradictory", "merged_value": None, "context_a": None, "context_b": None}
+
+
 async def run_debate(conflict: dict[str, Any], use_rebuttal: bool = True) -> dict[str, Any]:
     """Run the 5-step adversarial debate for one field conflict.
 
@@ -422,18 +483,28 @@ async def run_debate(conflict: dict[str, Any], use_rebuttal: bool = True) -> dic
     verdict = parse_judge_output(judge_raw)
 
     winner = str(verdict.get("winner") or "FLAG").strip().upper()
-    if winner not in {"A", "B", "FLAG"}:
+    if winner not in {"A", "B", "FLAG", "MERGE"}:
         winner = "FLAG"
 
     if winner == "A":
         winning_value: str | None = str(claim_a["value"])
         base_confidence = float(claim_a.get("confidence") or 0.0)
+        conflict_type = "contradictory"
     elif winner == "B":
         winning_value = str(claim_b["value"])
         base_confidence = float(claim_b.get("confidence") or 0.0)
+        conflict_type = "contradictory"
+    elif winner == "MERGE":
+        winning_value = verdict.get("winning_value") or f"{claim_a['value']} / {claim_b['value']}"
+        base_confidence = max(
+            float(claim_a.get("confidence") or 0.0),
+            float(claim_b.get("confidence") or 0.0),
+        )
+        conflict_type = "complementary"
     else:
         winning_value = None
         base_confidence = 0.40
+        conflict_type = "contradictory"
 
     adjustment = _clamp(_to_float(verdict.get("confidence_adjustment")), -0.10, 0.10)
     final_confidence = _clamp(base_confidence + adjustment, 0.0, 1.0)
@@ -451,12 +522,29 @@ async def run_debate(conflict: dict[str, Any], use_rebuttal: bool = True) -> dic
             "rebuttal_b": False,
         }
 
+    all_values = [
+        {
+            "value": str(claim_a["value"]),
+            "source_url": claim_a.get("source_url"),
+            "context": verdict.get("context_a"),
+        },
+        {
+            "value": str(claim_b["value"]),
+            "source_url": claim_b.get("source_url"),
+            "context": verdict.get("context_b"),
+        },
+    ]
+
     return {
         "field_name": field_name,
         "winner": winner,
         "winning_value": winning_value,
         "deciding_factor": str(verdict.get("deciding_factor") or "unresolvable"),
         "reasoning": str(verdict.get("reasoning") or ""),
+        "context_a": verdict.get("context_a"),
+        "context_b": verdict.get("context_b"),
+        "conflict_type": conflict_type,
+        "all_values": all_values,
         "rebuttal_assessment": rebuttal_assessment,
         "hallucination_detected": hallucination_detected,
         "argument_a": argument_a,

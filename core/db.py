@@ -177,8 +177,14 @@ def connect(path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
 
 def migrate(conn: sqlite3.Connection) -> None:
     with _WRITE_LOCK:
+        # Migrate run_snapshots if it exists with the old schema (keyed by run_id, not program_name_normalized)
+        snapshot_cols = {row[1] for row in conn.execute("PRAGMA table_info(run_snapshots)").fetchall()}
+        if snapshot_cols and "program_name_normalized" not in snapshot_cols:
+            conn.execute("ALTER TABLE run_snapshots RENAME TO run_snapshots_v1")
+
         for statement in DDL:
             conn.execute(statement)
+
         existing_cols = {
             row[1]
             for row in conn.execute("PRAGMA table_info(runs)").fetchall()

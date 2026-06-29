@@ -503,6 +503,11 @@ function CellContent({
   return (
     <>
       <Text style={s.tableValue}>{String(renderValue(entry.value) ?? '—').slice(0, 300)}</Text>
+      {entry.conflict_type && entry.conflict_type !== 'contradictory' && entry.all_values && entry.all_values.length > 1 && (
+        <Text style={[s.tableConfLine, { color: '#0f7c7d', fontStyle: 'italic' }]}>
+          {`[${entry.conflict_type}] ` + entry.all_values.map(av => av.context ? `${av.context}: ${av.value}` : av.value).join('  ·  ')}
+        </Text>
+      )}
       {confPct != null && (
         <Text style={[s.tableConfLine, { color: confColor(entry.confidence) }]}>
           {`Conf: ${confPct}%`}{entry.corroboration_count > 1 ? `  ·  ${entry.corroboration_count}×` : ''}

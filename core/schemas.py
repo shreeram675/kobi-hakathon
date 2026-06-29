@@ -294,6 +294,12 @@ class FieldReportEntry(KobieModel):
     # Alternative values that were present in the data but overruled (lower confidence/corroboration
     # or lost in adjudication debate). Each entry: {value, source_urls, reason}.
     rejected_alternatives: list[dict[str, Any]] = Field(default_factory=list)
+    # All simultaneously-valid values when conflict_type is not "contradictory".
+    # Each entry: {value, source_url, context}.
+    all_values: list[dict[str, Any]] | None = Field(default=None)
+    # How the conflict was resolved: "contradictory" (one winner), "complementary" (both valid),
+    # "range" (earn-rate span), "union" (partner-list merge), "recency" (latest date), "majority_vote".
+    conflict_type: str | None = None
 
 
 class FieldReport(KobieModel):
