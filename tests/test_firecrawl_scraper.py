@@ -1,7 +1,7 @@
 import pytest
 
-from firecrawl_scraper import FirecrawlRestClient, extract_content_blob, normalize_firecrawl_api_base, scrape_retrieved_urls
-from schemas import RetrievedUrl
+from pipeline.stages.firecrawl_scraper import FirecrawlRestClient, extract_content_blob, normalize_firecrawl_api_base, scrape_retrieved_urls
+from core.schemas import RetrievedUrl
 
 
 class FakeFirecrawlClient:

@@ -11,8 +11,8 @@ from hashlib import sha256
 from pathlib import Path
 import re
 
-from db import DEFAULT_DB_PATH, connect, migrate, upsert_raw_documents
-from schemas import RawDocument, RetrievedUrl, ScrapedUrlBlock, now_iso
+from core.db import DEFAULT_DB_PATH, connect, migrate, upsert_raw_documents
+from core.schemas import RawDocument, RetrievedUrl, ScrapedUrlBlock, now_iso
 
 
 MIN_WORDS = 100

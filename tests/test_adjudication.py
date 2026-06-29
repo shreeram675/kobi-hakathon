@@ -2,21 +2,21 @@ from datetime import date
 
 import asyncio
 
-import adjudication.conflict_adjudicator as conflict_adjudicator
-import adjudication.debate_engine as debate_engine
-from adjudication.conflict_adjudicator import (
+import pipeline.adjudication.conflict_adjudicator as conflict_adjudicator
+import pipeline.adjudication.debate_engine as debate_engine
+from pipeline.adjudication.conflict_adjudicator import (
     adjudicator_node,
     apply_adjudication_to_field_report,
     classify_volatility,
     detect_conflicts_from_packets,
 )
-from adjudication.debate_engine import (
+from pipeline.adjudication.debate_engine import (
     NO_REBUTTAL_NOTE,
     arguments_are_differentiated,
     parse_judge_output,
     run_debate,
 )
-from schemas import (
+from core.schemas import (
     ExtractedField,
     FieldReport,
     FieldReportEntry,

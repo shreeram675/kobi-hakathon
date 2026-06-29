@@ -1,4 +1,4 @@
-from providers import provider_for_stage
+from core.providers import provider_for_stage
 
 
 def test_stage_key_falls_back_to_shared_provider_key(monkeypatch):

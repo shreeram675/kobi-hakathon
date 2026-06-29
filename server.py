@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -30,9 +31,10 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel as _PydanticBase
 
-import db as _db
+from core import db as _db
 
-from schemas import (
+from core.schemas import (
+    Claim,
     AgentState,
     BriefOutput,
     FieldReport,
@@ -43,7 +45,7 @@ from schemas import (
     now_iso,
     RunMode,
 )
-from graph import (
+from pipeline.graph import (
     input_validator_node,
     query_generator_node,
     retrieval_node,
@@ -52,9 +54,10 @@ from graph import (
     adjudication_node,
     narrator_node,
 )
-from comparison_brief import generate_comparison_brief
-from converse import answer_comparison_question, answer_question
-import cost_tracker
+from pipeline.stages.comparison import compare_claim_sets
+from pipeline.stages.comparison_brief import generate_comparison_brief
+from pipeline.stages.converse import answer_comparison_question, answer_question
+from core import cost_tracker
 
 app = FastAPI(title="Kobie API")
 
@@ -280,6 +283,43 @@ def _save_program_snapshot_to_db(program_name: str, brand: str | None,
         logger.exception("Failed to save snapshot for %s", program_name)
 
 
+def _persist_run_summary(record: RunRecord) -> None:
+    """Persist the run summary row used by the history list."""
+    with record.lock:
+        run_status = record.run_status
+        if record.mode == "compare":
+            completed_states = [ps for ps in record.program_states if ps]
+            if completed_states:
+                qualities = [float(ps.get("data_quality", 0.0) or 0.0) for ps in completed_states]
+                data_quality = sum(qualities) / len(qualities)
+            else:
+                data_quality = float(record.state.get("data_quality", 0.0) or 0.0)
+            program_name = " vs ".join([p for p in record.programs if p]) or record.user_input
+        else:
+            data_quality = float(record.state.get("data_quality", 0.0) or 0.0)
+            program_name = record.state.get("program_name") or record.user_input
+
+        summary_state = {
+            "run_id": record.run_id,
+            "mode": record.mode,
+            "user_input": record.user_input,
+            "program_name": program_name,
+            "domain": record.state.get("domain"),
+            "data_quality": data_quality,
+            "created_at": record.state.get("created_at"),
+        }
+
+    # build_run_response also acquires record.lock — must be called outside the block above
+    payload = None
+    if run_status != "running":
+        try:
+            payload = json.dumps(build_run_response(record), default=str)
+        except Exception:
+            payload = None
+
+    _db.upsert_run(_db_conn, summary_state, status=run_status, run_state_json=payload)
+
+
 def _make_program_state_snapshot(record: RunRecord) -> dict[str, Any]:
     """Serialize record.state into the canonical program-state snapshot format."""
     with record.lock:
@@ -316,6 +356,176 @@ def _restore_single_from_cache(record: RunRecord, snapshot: dict) -> None:
     with record.lock:
         record.cached_response = cached
         record.run_status = "done"
+
+
+def _snapshot_run_response(snapshot: dict) -> dict[str, Any]:
+    """Return a completed run response directly from a DB snapshot."""
+    program_state = json.loads(snapshot["program_state_json"])
+    program_name = program_state.get("program_name") or snapshot.get("program_name") or ""
+    response: dict[str, Any] = dict(program_state)
+    response["mode"] = "single"
+    response["user_input"] = response.get("user_input") or program_name
+    response["program_name"] = response.get("program_name") or program_name
+    response["active_stage"] = None
+    response["status"] = "done"
+    response["stage_status"] = response.get("stage_status") or {s: "done" for s in UI_STAGES}
+    response["conversation"] = []
+    response["comparison_conversation"] = []
+    return response
+
+
+def _run_response_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    payload = row.get("run_state_json")
+    if not payload:
+        return None
+    try:
+        return json.loads(payload)
+    except Exception:
+        return None
+
+
+def _comparison_brief_stub(run_id: str, programs: list[str], created_at: str) -> dict[str, Any]:
+    """Lightweight fallback brief for archived compare runs that predate persisted briefs."""
+    readable = " vs ".join(programs) if programs else "the programs"
+    return {
+        "brief_id": f"{run_id}_reconstructed",
+        "run_id": run_id,
+        "programs": programs,
+        "overall_winner": None,
+        "executive_summary": (
+            f"This archived comparison of {readable} was reconstructed from saved program "
+            "snapshots. The detailed narrative brief was not persisted for this older run, "
+            "but the side-by-side analysis data is still available."
+        ),
+        "category_verdicts": [],
+        "key_differentiators": [],
+        "personas": [
+            {
+                "program": program,
+                "best_for": "Reviewing the reconstructed comparison evidence.",
+            }
+            for program in programs
+        ],
+        "strategic_profiles": [],
+        "differentiation_themes": [],
+        "generated_at": created_at,
+    }
+
+
+def _compare_run_response_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    """Rebuild a compare-mode response from persisted program snapshots when needed."""
+    payload = _run_response_from_row(row)
+    if payload is not None:
+        return payload
+
+    program_name = (row.get("program_name") or "").strip()
+    programs = [part.strip() for part in re.split(r"\s+vs\s+", program_name) if part.strip()]
+    if not programs:
+        programs = [row.get("user_input") or row["run_id"]]
+
+    snapshots: list[dict[str, Any]] = []
+    for snapshot in _db.list_program_snapshots_by_run_id(_db_conn, row["run_id"]):
+        try:
+            state = json.loads(snapshot["program_state_json"])
+        except Exception:
+            continue
+        snapshots.append({"snapshot": snapshot, "state": state})
+
+    snapshot_programs = [snap["state"].get("program_name") or snap["snapshot"].get("program_name") for snap in snapshots]
+    snapshot_programs = [str(name).strip() for name in snapshot_programs if str(name).strip()]
+    if snapshot_programs:
+        programs = snapshot_programs
+
+    if snapshots and len(programs) < 2:
+        programs = [
+            snapshots[i]["state"].get("program_name") or snapshots[i]["snapshot"].get("program_name") or f"Program {i + 1}"
+            for i in range(len(snapshots))
+        ]
+
+    created_at = row.get("updated_at") or row.get("created_at") or now_iso()
+    status = row.get("status") or "done"
+
+    if len(snapshots) < 2:
+        base_state = build_initial_state(row.get("user_input") or programs[0], RunMode("compare"))
+        response: dict[str, Any] = {k: _ser(v) for k, v in base_state.items()}
+        response["run_id"] = row["run_id"]
+        response["mode"] = "compare"
+        response["user_input"] = row.get("user_input") or programs[0]
+        response["program_name"] = programs[0]
+        response["compare_b"] = None
+        response["comparison_run"] = {
+            "programs": programs,
+            "current_program_index": 0,
+            "total_programs": len(programs),
+            "program_statuses": ["done" for _ in programs],
+            "program_states": [None for _ in programs],
+            "program_stage_statuses": [{s: "done" for s in UI_STAGES} for _ in programs],
+        }
+        response["comparison_output"] = None
+        response["comparison_brief"] = _comparison_brief_stub(row["run_id"], programs, created_at)
+        response["conversation"] = []
+        response["comparison_conversation"] = []
+        response["active_stage"] = None
+        response["status"] = status
+        response["stage_status"] = {s: "done" for s in UI_STAGES}
+        response["created_at"] = created_at
+        response["updated_at"] = created_at
+        response["errors"] = []
+        return response
+
+    primary_state = dict(snapshots[0]["state"])
+    secondary_state = dict(snapshots[1]["state"])
+
+    comparison_run = {
+        "programs": programs,
+        "current_program_index": 0,
+        "total_programs": len(programs),
+        "program_statuses": ["done" for _ in programs],
+        "program_states": [snap["state"] for snap in snapshots] + [None] * max(0, len(programs) - len(snapshots)),
+        "program_stage_statuses": [
+            snap["state"].get("stage_status") or {s: "done" for s in UI_STAGES}
+            for snap in snapshots
+        ] + [{s: "done" for s in UI_STAGES}] * max(0, len(programs) - len(snapshots)),
+    }
+
+    compare_claims_a = [
+        Claim.model_validate(claim)
+        for claim in (primary_state.get("adjudicated_claims") or [])
+    ]
+    compare_claims_b = [
+        Claim.model_validate(claim)
+        for claim in (secondary_state.get("adjudicated_claims") or [])
+    ]
+
+    comparison_output = None
+    try:
+        comparison_output = compare_claim_sets(
+            row["run_id"],
+            programs[0],
+            programs[1],
+            compare_claims_a,
+            compare_claims_b,
+        ).model_dump()
+    except Exception:
+        comparison_output = None
+
+    response: dict[str, Any] = dict(primary_state)
+    response["run_id"] = row["run_id"]
+    response["mode"] = "compare"
+    response["user_input"] = row.get("user_input") or response.get("user_input") or programs[0]
+    response["program_name"] = programs[0]
+    response["compare_b"] = secondary_state
+    response["comparison_run"] = comparison_run
+    response["comparison_output"] = comparison_output
+    response["comparison_brief"] = _comparison_brief_stub(row["run_id"], programs, created_at)
+    response["conversation"] = []
+    response["comparison_conversation"] = []
+    response["active_stage"] = None
+    response["status"] = status
+    response["stage_status"] = response.get("stage_status") or {s: "done" for s in UI_STAGES}
+    response["created_at"] = row.get("created_at") or response.get("created_at") or created_at
+    response["updated_at"] = row.get("updated_at") or response.get("updated_at") or created_at
+    return response
 
 
 def _restore_compare_program_from_cache(
@@ -604,7 +814,7 @@ def run_pipeline(record: RunRecord) -> None:
 
             # Generate LLM comparison brief from all completed field reports
             try:
-                from schemas import FieldReport as _FieldReport
+                from core.schemas import FieldReport as _FieldReport
                 brief_names = [all_names[i] for i in done_indices]
                 brief_reports = []
                 for i in done_indices:
@@ -645,6 +855,7 @@ def run_pipeline(record: RunRecord) -> None:
             if not _stopped(record):
                 record.run_status = "done" if any_success else "error"
             # else: run_status is already "cancelled" — preserve it
+        _persist_run_summary(record)
 
     else:
         success = _run_single_pipeline(record)
@@ -682,20 +893,144 @@ def run_pipeline(record: RunRecord) -> None:
 
         with record.lock:
             record.run_status = "done" if success else "error"
+        _persist_run_summary(record)
+
+
+# ── DB-fallback converse helpers ──────────────────────────────────────────────
+
+def _single_converse_from_db(run_id: str, message: str) -> dict[str, Any]:
+    """Stateless single-program converse for historical runs not held in STORE."""
+    from core.schemas import BriefOutput as _BO, FieldReport as _FR
+
+    payload: dict[str, Any] | None = None
+    row = _db.find_run(_db_conn, run_id)
+    if row is not None:
+        payload = _run_response_from_row(row)
+    if payload is None:
+        snapshot = _db.find_program_snapshot_by_run_id(_db_conn, run_id)
+        if snapshot:
+            payload = _snapshot_run_response(snapshot)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    final_brief_raw = payload.get("final_brief")
+    if not final_brief_raw:
+        raise HTTPException(status_code=400, detail="Pipeline has not completed — no brief available.")
+    try:
+        final_brief = _BO.model_validate(final_brief_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not parse brief data for this run.")
+
+    field_report: FieldReport | None = None
+    fr_raw = payload.get("field_report")
+    if isinstance(fr_raw, dict):
+        try:
+            field_report = FieldReport.model_validate(fr_raw)
+        except Exception:
+            pass
+
+    cost_tracker.set_active_run_id(run_id)
+    try:
+        answer = answer_question(message, final_brief, field_report)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return answer.model_dump()
+
+
+def _compare_converse_from_db(run_id: str, message: str) -> dict[str, Any]:
+    """Stateless comparison converse for historical runs not held in STORE."""
+    from core.schemas import ComparisonBrief as _CB, FieldReport as _FR
+
+    row = _db.find_run(_db_conn, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    payload = _run_response_from_row(row)
+    if payload is None:
+        raise HTTPException(status_code=400, detail="Run state not persisted — cannot answer questions about this run.")
+
+    comparison_brief_raw = payload.get("comparison_brief")
+    # Treat stub briefs (empty category_verdicts) same as missing — generate a real one
+    is_stub = not comparison_brief_raw or not (
+        isinstance(comparison_brief_raw.get("category_verdicts"), list)
+        and len(comparison_brief_raw["category_verdicts"]) > 0
+    )
+    if is_stub:
+        logger.info("[%s] no comparison brief in DB for converse — generating on demand", run_id)
+        comp_run = payload.get("comparison_run") or {}
+        prog_states_raw: list = comp_run.get("program_states") or []
+        prog_names_raw: list[str] = comp_run.get("programs") or []
+        from core.schemas import FieldReport as _FR2
+        brief_reports_tmp: list = []
+        brief_names_tmp: list[str] = []
+        for i, ps in enumerate(prog_states_raw):
+            if not isinstance(ps, dict):
+                continue
+            name = prog_names_raw[i] if i < len(prog_names_raw) else f"Program {i + 1}"
+            fr_raw = ps.get("field_report")
+            if isinstance(fr_raw, dict):
+                try:
+                    brief_reports_tmp.append(_FR2.model_validate(fr_raw))
+                    brief_names_tmp.append(name)
+                except Exception:
+                    pass
+        if len(brief_reports_tmp) >= 2:
+            try:
+                generated = generate_comparison_brief(run_id, brief_names_tmp, brief_reports_tmp)
+                comparison_brief_raw = _ser(generated)
+            except Exception:
+                logger.exception("[%s] on-demand brief generation failed during converse", run_id)
+        still_stub = not comparison_brief_raw or not (
+            isinstance(comparison_brief_raw.get("category_verdicts"), list)
+            and len(comparison_brief_raw["category_verdicts"]) > 0
+        )
+        if still_stub:
+            raise HTTPException(
+                status_code=400,
+                detail="No comparison brief available — open the comparison page to generate one first.",
+            )
+    try:
+        comparison_brief = _CB.model_validate(comparison_brief_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not parse comparison brief for this run.")
+
+    comp_run = payload.get("comparison_run") or {}
+    prog_states: list[dict | None] = comp_run.get("program_states") or []
+    prog_names: list[str] = comp_run.get("programs") or []
+
+    program_reports: list[tuple[str, FieldReport | None]] = []
+    for i, ps in enumerate(prog_states):
+        name = prog_names[i] if i < len(prog_names) else f"Program {i + 1}"
+        fr: FieldReport | None = None
+        if isinstance(ps, dict):
+            fr_raw = ps.get("field_report")
+            if isinstance(fr_raw, dict):
+                try:
+                    fr = _FR.model_validate(fr_raw)
+                except Exception:
+                    pass
+        program_reports.append((name, fr))
+
+    cost_tracker.set_active_run_id(run_id)
+    try:
+        answer = answer_comparison_question(message, comparison_brief, program_reports)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return answer.model_dump()
 
 
 # ── Compare converse endpoint ─────────────────────────────────────────────────
 
 @app.post("/api/run/{run_id}/compare/converse")
 def compare_converse(run_id: str, body: ConverseRequest) -> dict[str, Any]:
+    if not body.message.strip():
+        raise HTTPException(status_code=400, detail="message is required")
+
     with STORE_LOCK:
         record = STORE.get(run_id)
     if record is None:
-        raise HTTPException(status_code=404, detail="run not found")
+        return _compare_converse_from_db(run_id, body.message.strip())
     if record.mode != "compare":
         raise HTTPException(status_code=400, detail="not a comparison run")
-    if not body.message.strip():
-        raise HTTPException(status_code=400, detail="message is required")
 
     with record.lock:
         comparison_brief = record.state.get("comparison_brief")
@@ -709,7 +1044,7 @@ def compare_converse(run_id: str, body: ConverseRequest) -> dict[str, Any]:
         )
 
     # Normalise comparison_brief (may be a Pydantic object or a serialised dict)
-    from schemas import ComparisonBrief as _CB, FieldReport as _FR
+    from core.schemas import ComparisonBrief as _CB, FieldReport as _FR
     if isinstance(comparison_brief, dict):
         comparison_brief = _CB.model_validate(comparison_brief)
 
@@ -1254,7 +1589,7 @@ def _run_mock_pipeline(record: RunRecord) -> None:
                     record.state = dict(state_a)
 
             try:
-                from schemas import FieldReport as _FieldReport
+                from core.schemas import FieldReport as _FieldReport
                 brief_names = [all_names[i] for i in done_indices]
                 brief_reports = []
                 for i in done_indices:
@@ -1343,24 +1678,72 @@ def cache_check_multi(programs: list[str] = Query(default=[])) -> list[dict[str,
 
 @app.get("/api/run/history")
 def run_history() -> list[dict[str, Any]]:
-    """Return DB-persisted program analyses (survives server restarts)."""
-    rows = _db.list_program_snapshots(_db_conn, limit=100)
-    result: list[dict[str, Any]] = []
-    for row in rows:
+    """Return persisted analyses plus live runs currently held in memory."""
+    result_map: dict[str, dict[str, Any]] = {}
+
+    def upsert(item: dict[str, Any], priority: int) -> None:
+        run_id = item.get("run_id") or ""
+        if not run_id:
+            return
+        current = result_map.get(run_id)
+        if current is None or priority >= current["_priority"]:
+            result_map[run_id] = {**item, "_priority": priority}
+
+    for row in _db.list_program_snapshots(_db_conn, limit=100):
         try:
             state = json.loads(row["program_state_json"])
         except Exception:
             continue
-        result.append({
-            "run_id": state.get("run_id", ""),
-            "user_input": row["program_name"],
-            "mode": "single",
+        run_id = state.get("run_id", "")
+        upsert({
+            "run_id": run_id,
+            "user_input": state.get("user_input") or row["program_name"],
+            "mode": state.get("mode") or "single",
             "program_name": row["program_name"],
             "data_quality": state.get("data_quality", 0.0),
-            "status": "done",
+            "status": state.get("status") or "done",
             "created_at": row["created_at"],
             "source": "db",
-        })
+        }, priority=1)
+
+    for row in _db.list_runs(_db_conn, limit=200):
+        upsert({
+            "run_id": row["run_id"],
+            "user_input": row["user_input"],
+            "mode": row["mode"],
+            "program_name": row["program_name"] or row["user_input"],
+            "data_quality": row["data_quality"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "source": "db",
+        }, priority=2)
+
+    live_run_ids: set[str] = set()
+    with STORE_LOCK:
+        records = list(STORE.values())
+    for record in records:
+        summary = build_summary(record)
+        live_run_ids.add(summary.get("run_id", ""))
+        with record.lock:
+            program_name = (
+                " vs ".join(record.programs)
+                if record.mode == "compare" and len(record.programs) >= 2
+                else record.state.get("program_name")
+            )
+        upsert({
+            **summary,
+            "program_name": program_name,
+            "source": "live",
+        }, priority=3)
+
+    result = [dict(item) for item in result_map.values()]
+    for item in result:
+        item.pop("_priority", None)
+        # Runs that are "running" in the DB but not in the live in-memory store
+        # are orphaned (server was restarted mid-run). Treat them as cancelled.
+        if item.get("status") == "running" and item.get("run_id") not in live_run_ids:
+            item["status"] = "cancelled"
+    result.sort(key=lambda row: row.get("created_at") or "", reverse=True)
     return result
 
 
@@ -1383,12 +1766,14 @@ def create_run(body: CreateRunBody) -> dict[str, str]:
                        force_fresh=body.force_fresh)
     with STORE_LOCK:
         STORE[run_id] = record
+    _persist_run_summary(record)
 
     # Single-mode cache short-circuit: restore immediately without starting pipeline thread
     if not body.mock and not body.force_fresh and mode == "single":
         snapshot = _db.find_program_snapshot(_db_conn, body.user_input.strip())
         if snapshot:
             _restore_single_from_cache(record, snapshot)
+            _persist_run_summary(record)
             logger.info("[%s] served from cache for %r", run_id, body.user_input.strip())
             return {"run_id": run_id}
 
@@ -1413,7 +1798,17 @@ def get_run(run_id: str) -> dict[str, Any]:
     with STORE_LOCK:
         record = STORE.get(run_id)
     if record is None:
-        raise HTTPException(status_code=404, detail="run not found")
+        # Prefer the runs table (has correct mode + full state for new runs).
+        # Fall back to run_snapshots for older single-mode runs that predate _persist_run_summary.
+        row = _db.find_run(_db_conn, run_id)
+        if row is not None:
+            payload = _compare_run_response_from_row(row) if row.get("mode") == "compare" else _run_response_from_row(row)
+            if payload is not None:
+                return payload
+        snapshot = _db.find_program_snapshot_by_run_id(_db_conn, run_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return _snapshot_run_response(snapshot)
     return build_run_response(record)
 
 
@@ -1442,12 +1837,13 @@ def clarify(run_id: str, body: ClarifyRequest) -> dict[str, Any]:
 
 @app.post("/api/run/{run_id}/converse")
 def converse(run_id: str, body: ConverseRequest) -> dict[str, Any]:
+    if not body.message.strip():
+        raise HTTPException(status_code=400, detail="message is required")
+
     with STORE_LOCK:
         record = STORE.get(run_id)
     if record is None:
-        raise HTTPException(status_code=404, detail="run not found")
-    if not body.message.strip():
-        raise HTTPException(status_code=400, detail="message is required")
+        return _single_converse_from_db(run_id, body.message.strip())
 
     with record.lock:
         final_brief: BriefOutput | None = record.state.get("final_brief")
@@ -1477,6 +1873,95 @@ def converse(run_id: str, body: ConverseRequest) -> dict[str, Any]:
         )
 
     return answer.model_dump()
+
+
+@app.post("/api/run/{run_id}/generate-brief")
+def trigger_generate_brief(run_id: str) -> dict[str, Any]:
+    """Generate (or return cached) comparison brief for a stored compare run."""
+    # If run is live in memory and brief already exists, return it
+    with STORE_LOCK:
+        record = STORE.get(run_id)
+    if record is not None:
+        with record.lock:
+            existing = record.state.get("comparison_brief")
+        if existing is not None:
+            return _ser(existing) if hasattr(existing, "model_dump") else existing
+
+    # Load from DB
+    row = _db.find_run(_db_conn, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if row.get("mode") != "compare":
+        raise HTTPException(status_code=400, detail="not a comparison run")
+
+    payload = _run_response_from_row(row) or _compare_run_response_from_row(row)
+    if payload is None:
+        raise HTTPException(status_code=400, detail="run state not available")
+
+    # Return cached brief only if it's a real one (has populated category_verdicts).
+    # Stub briefs produced by _comparison_brief_stub always have category_verdicts=[].
+    existing_brief = payload.get("comparison_brief")
+    if existing_brief and isinstance(existing_brief.get("category_verdicts"), list) and len(existing_brief["category_verdicts"]) > 0:
+        return existing_brief
+
+    # Extract program states and field reports
+    comp_run = payload.get("comparison_run") or {}
+    prog_states: list[dict | None] = comp_run.get("program_states") or []
+    prog_names: list[str] = comp_run.get("programs") or []
+
+    from core.schemas import FieldReport as _FR
+    brief_reports: list = []
+    brief_names: list[str] = []
+    for i, ps in enumerate(prog_states):
+        if not isinstance(ps, dict):
+            continue
+        name = prog_names[i] if i < len(prog_names) else f"Program {i + 1}"
+        fr_raw = ps.get("field_report")
+        if isinstance(fr_raw, dict):
+            try:
+                brief_reports.append(_FR.model_validate(fr_raw))
+                brief_names.append(name)
+            except Exception:
+                pass
+
+    if len(brief_reports) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Not enough program field data to generate brief. Re-run the comparison.",
+        )
+
+    cost_tracker.set_active_run_id(run_id)
+    try:
+        brief = generate_comparison_brief(run_id, brief_names, brief_reports)
+    except Exception as exc:
+        logger.exception("[%s] on-demand brief generation failed", run_id)
+        raise HTTPException(status_code=500, detail=f"Brief generation failed: {exc}")
+
+    brief_dict = _ser(brief)
+
+    # Persist the updated state so future loads have the brief
+    try:
+        payload["comparison_brief"] = brief_dict
+        summary_state = {
+            "run_id": run_id,
+            "mode": "compare",
+            "user_input": payload.get("user_input", ""),
+            "program_name": payload.get("program_name") or " vs ".join(brief_names),
+            "domain": payload.get("domain"),
+            "data_quality": payload.get("data_quality", 0),
+            "created_at": payload.get("created_at"),
+        }
+        _db.upsert_run(
+            _db_conn,
+            summary_state,
+            status="done",
+            run_state_json=json.dumps(payload, default=str),
+        )
+        logger.info("[%s] brief generated and persisted for %s", run_id, " vs ".join(brief_names))
+    except Exception:
+        logger.exception("[%s] failed to persist generated brief", run_id)
+
+    return brief_dict
 
 
 @app.post("/api/run/{run_id}/stop")

@@ -13,7 +13,7 @@ import { ClaimsTable } from "./ClaimsTable";
 import { ConflictGrid } from "./ConflictCard";
 import { DebateTimeline } from "./DebateTimeline";
 import { HumanReviewQueue } from "./HumanReviewQueue";
-import { SourcePill } from "./SourcePill";
+import { SourcePill, SourcePillRow } from "./SourcePill";
 import { CoverageRing } from "./charts/CoverageRing";
 import { DataQualityGauge } from "./charts/DataQualityGauge";
 import { Donut } from "./charts/Donut";
@@ -400,31 +400,53 @@ export function OutputSection({ state }: { state: AgentState }) {
         </div>
       </div>
 
-      {state.final_brief && (
-        <div className="overflow-hidden rounded-card border border-line">
-          <div className="flex items-center gap-2 border-b border-line bg-soft-grey/40 px-4 py-2.5">
-            <FileText className="h-4 w-4 text-teal" />
-            <span className="text-sm font-semibold text-navy">Analyst brief</span>
-            {state.final_brief.entailment_passed && (
-              <Badge tone="green" className="ml-auto">
-                <BadgeCheck className="h-3 w-3" />
-                Entailment passed
-              </Badge>
+      {state.final_brief && (() => {
+        const extractedEntries = (state.field_report?.entries ?? []).filter(
+          (e) => e.status === "extracted" && e.source_urls?.length > 0,
+        );
+        return (
+          <div className="overflow-hidden rounded-card border border-line">
+            <div className="flex items-center gap-2 border-b border-line bg-soft-grey/40 px-4 py-2.5">
+              <FileText className="h-4 w-4 text-teal" />
+              <span className="text-sm font-semibold text-navy">Analyst brief</span>
+              {state.final_brief.entailment_passed && (
+                <Badge tone="green" className="ml-auto">
+                  <BadgeCheck className="h-3 w-3" />
+                  Entailment passed
+                </Badge>
+              )}
+            </div>
+            <div className="brief max-h-[460px] overflow-y-auto scroll-thin px-5 py-4">
+              <MarkdownBrief text={state.final_brief.brief_text} />
+            </div>
+            {extractedEntries.length > 0 && (
+              <div className="border-t border-line bg-soft-grey/20 px-4 py-3">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-ink/40">
+                  Sources by field
+                </p>
+                <div className="space-y-1.5 max-h-[220px] overflow-y-auto scroll-thin">
+                  {extractedEntries.map((e) => (
+                    <div key={e.field_path} className="flex items-start gap-2 min-w-0">
+                      <span className="mt-0.5 shrink-0 text-[10px] font-medium text-navy w-[160px] truncate" title={e.field_path}>
+                        {e.field_path.split(".").slice(-1)[0].replace(/_/g, " ")}
+                      </span>
+                      <SourcePillRow urls={e.source_urls} />
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
+            <div className="flex flex-wrap items-center gap-2 border-t border-line bg-soft-grey/30 px-4 py-2 text-xs text-ink/55">
+              <Quote className="h-3.5 w-3.5" />
+              <span className="stat-num">{state.final_brief.word_count} words</span>
+              <span>·</span>
+              <span className="stat-num">
+                {(state.final_brief.cited_claim_ids ?? []).length} cited claims
+              </span>
+            </div>
           </div>
-          <div className="brief max-h-[460px] overflow-y-auto scroll-thin px-5 py-4">
-            <MarkdownBrief text={state.final_brief.brief_text} />
-          </div>
-          <div className="flex flex-wrap items-center gap-2 border-t border-line bg-soft-grey/30 px-4 py-2 text-xs text-ink/55">
-            <Quote className="h-3.5 w-3.5" />
-            <span className="stat-num">{state.final_brief.word_count} words</span>
-            <span>·</span>
-            <span className="stat-num">
-              {(state.final_brief.cited_claim_ids ?? []).length} cited claims
-            </span>
-          </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

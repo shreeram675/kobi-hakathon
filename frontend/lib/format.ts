@@ -69,6 +69,19 @@ export function relativeTime(iso: string | null | undefined): string {
   return `${day}d ago`;
 }
 
+export function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 /** mm:ss elapsed between two ISO timestamps (end defaults to now). */
 export function elapsed(startIso: string, endIso?: string): string {
   const start = new Date(startIso).getTime();

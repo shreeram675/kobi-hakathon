@@ -7,9 +7,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import streamlit as st
 
-from graph import run_validation_chat, run_validation_chat_traced
+from pipeline.graph import run_validation_chat, run_validation_chat_traced
 from pipeline.schema_config import all_default_field_paths
-from validation import verifier_result_as_message
+from pipeline.stages.validation import verifier_result_as_message
 
 
 st.set_page_config(page_title="Kobie Phase 2", layout="wide")

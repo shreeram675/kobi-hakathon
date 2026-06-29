@@ -1,4 +1,4 @@
-from validation import validate_conversation, validate_input
+from pipeline.stages.validation import validate_conversation, validate_input
 
 
 class FakeChatClient:

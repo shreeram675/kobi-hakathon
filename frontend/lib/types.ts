@@ -196,6 +196,7 @@ export interface FieldReportEntry {
   source_snippet: string | null;
   confidence: number | null;
   corroboration_count: number;
+  rejected_alternatives?: Array<{ value: unknown; source_urls: string[]; reason: string }>;
 }
 
 export interface FieldReport {
@@ -314,17 +315,32 @@ export interface CategoryVerdict {
   label: string;
   winner: string;
   insight: string;
+  source_urls?: string[];
 }
 
 export interface KeyDifferentiator {
   topic: string;
   insight: string;
   advantage: string;
+  source_urls?: string[];
+  rejected_note?: string | null;
 }
 
 export interface ProgramPersona {
   program: string;
   best_for: string;
+}
+
+export interface ProgramStrategicProfile {
+  program: string;
+  advantages: string[];
+  gaps: string[];
+}
+
+export interface DifferentiationTheme {
+  theme: string;
+  summary: string;
+  leader: string | null;
 }
 
 export interface ComparisonBrief {
@@ -336,6 +352,8 @@ export interface ComparisonBrief {
   category_verdicts: CategoryVerdict[];
   key_differentiators: KeyDifferentiator[];
   personas: ProgramPersona[];
+  strategic_profiles: ProgramStrategicProfile[];
+  differentiation_themes: DifferentiationTheme[];
   generated_at: string;
 }
 

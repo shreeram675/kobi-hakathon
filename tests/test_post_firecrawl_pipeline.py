@@ -1,7 +1,7 @@
 import sqlite3
 import requests
 
-from db import connect, migrate
+from core.db import connect, migrate
 from pipeline.nodes.ingest_node import ingest_node
 from pipeline.nodes.ingest_node import _target_fields_by_query_id
 from pipeline.schema_config import FOCUSED_SCHEMA_FIELD_PATHS, default_arcguide_schema_config
@@ -16,7 +16,7 @@ from pipeline.stages.extractor import (
 from pipeline.stages.field_report import build_field_report
 from pipeline.stages.normalizer import generate_identity_hash, normalize_packet
 from pipeline.stages.raw_store import hash_url, store_firecrawl_output
-from schemas import (
+from core.schemas import (
     ExtractedField,
     ExtractedObjectPacket,
     NormalizedObjectPacket,

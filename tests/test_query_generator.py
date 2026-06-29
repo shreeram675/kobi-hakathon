@@ -3,14 +3,14 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from query_generator import (
+from pipeline.stages.query_generator import (
     GeminiQueryGeneratorClient,
     QUERY_GENERATOR_SYSTEM_PROMPT,
     build_local_query_generation_output,
     generate_queries,
     parse_query_generation_output,
 )
-from schemas import ProgramIdentity
+from core.schemas import ProgramIdentity
 
 
 class FakeQueryClient:

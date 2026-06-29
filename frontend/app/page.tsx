@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import {
+  History,
   Loader2,
   Sparkles,
   GitCompareArrows,
@@ -158,6 +160,12 @@ export default function HomePage() {
   return (
     <div className="min-h-screen flex flex-col">
       <Topbar>
+        <Link href="/history">
+          <Button size="sm" variant="ghost" className="text-white/75 hover:bg-white/10 hover:text-white">
+            <History className="h-4 w-4" />
+            History
+          </Button>
+        </Link>
         <RunModeTab value={mode} onChange={setMode} />
       </Topbar>
 

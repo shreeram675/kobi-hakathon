@@ -1,6 +1,6 @@
 import pytest
 
-from schemas import Claim, ClaimStatus, Volatility, build_initial_state
+from core.schemas import Claim, ClaimStatus, Volatility, build_initial_state
 
 
 def test_supported_claim_requires_source_and_access_date():

@@ -16,7 +16,7 @@ import logging
 import re
 from urllib.parse import quote, urlparse
 
-from schemas import RetrievedUrl, new_id
+from core.schemas import RetrievedUrl, new_id
 
 LOGGER = logging.getLogger(__name__)
 

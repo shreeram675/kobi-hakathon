@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/textarea";
 import { StatusBadge } from "./badges";
 import { useCompareConverse, useConverse } from "@/lib/hooks";
 import { cn } from "@/lib/format";
-import type { ConverseTurn } from "@/lib/types";
+import type { ConverseTurn, ConverseAnswer } from "@/lib/types";
 
 const SINGLE_SUGGESTIONS = [
   "What is the base earn rate?",
@@ -39,6 +39,8 @@ export function ConverseThread({
   placeholder?: string;
 }) {
   const [message, setMessage] = useState("");
+  // Optimistic local turns — used for historical runs where server conversation won't update.
+  const [localTurns, setLocalTurns] = useState<ConverseTurn[]>([]);
   const singleConverse = useConverse(runId);
   const compareConverse = useCompareConverse(runId);
   const converse = compare ? compareConverse : singleConverse;
@@ -46,17 +48,52 @@ export function ConverseThread({
   const effectivePlaceholder = placeholder ?? (compare ? "Ask about the comparison…" : "Ask about this program…");
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // When the server conversation grows (live run updated), clear local optimistic turns
+  // so we don't duplicate messages that the server already persisted.
+  const prevServerLen = useRef(conversation.length);
   useEffect(() => {
-    // scroll only the inner message list, not the whole page
+    if (conversation.length > prevServerLen.current) {
+      setLocalTurns([]);
+    }
+    prevServerLen.current = conversation.length;
+  }, [conversation.length]);
+
+  // Combined display: server turns first, then any optimistic local turns
+  const displayed: ConverseTurn[] = [...conversation, ...localTurns];
+
+  useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [conversation.length, converse.isPending]);
+  }, [displayed.length, converse.isPending]);
 
   function send(text: string) {
     const trimmed = text.trim();
     if (!trimmed || converse.isPending) return;
-    converse.mutate(trimmed);
     setMessage("");
+
+    // Optimistically add the user turn immediately
+    const userTurn: ConverseTurn = {
+      role: "user",
+      message: trimmed,
+      created_at: new Date().toISOString(),
+    };
+    setLocalTurns((prev) => [...prev, userTurn]);
+
+    converse.mutate(trimmed, {
+      onSuccess: (answer: ConverseAnswer) => {
+        const assistantTurn: ConverseTurn = {
+          role: "assistant",
+          message: answer.answer,
+          answer,
+          created_at: new Date().toISOString(),
+        };
+        setLocalTurns((prev) => [...prev, assistantTurn]);
+      },
+      onError: () => {
+        // Remove the optimistic user turn on failure
+        setLocalTurns((prev) => prev.slice(0, -1));
+      },
+    });
   }
 
   return (
@@ -65,13 +102,13 @@ export function ConverseThread({
         ref={scrollRef}
         className="max-h-[340px] min-h-[220px] flex-1 space-y-3 overflow-y-auto scroll-thin p-4"
       >
-        {conversation.length === 0 && (
+        {displayed.length === 0 && (
           <p className="text-sm text-ink/45">
             Ask a follow-up question — answers are grounded strictly in the
             extracted claims.
           </p>
         )}
-        {conversation.map((turn, i) => (
+        {displayed.map((turn, i) => (
           <Bubble key={i} turn={turn} />
         ))}
         {converse.isPending && (
@@ -82,9 +119,14 @@ export function ConverseThread({
             </span>
           </div>
         )}
+        {converse.isError && (
+          <p className="text-xs text-red/70">
+            Failed to get a response. Please try again.
+          </p>
+        )}
       </div>
 
-      {!disabled && conversation.length <= 1 && (
+      {!disabled && displayed.length <= 1 && (
         <div className="flex flex-wrap gap-1.5 px-4 pb-2">
           {effectiveSuggestions.map((s) => (
             <button
@@ -111,7 +153,7 @@ export function ConverseThread({
           placeholder={disabled ? "Run still processing…" : effectivePlaceholder}
           disabled={disabled || converse.isPending}
         />
-        <Button type="submit" size="md" disabled={disabled || !message.trim()}>
+        <Button type="submit" size="md" disabled={disabled || !message.trim() || converse.isPending}>
           <CornerDownLeft className="h-4 w-4" />
           Send
         </Button>
@@ -140,7 +182,7 @@ function Bubble({ turn }: { turn: ConverseTurn }) {
             : "border border-line bg-white text-ink",
         )}
       >
-        <p className="leading-relaxed">{turn.message}</p>
+        <p className="leading-relaxed whitespace-pre-wrap">{turn.message}</p>
         {turn.answer && (
           <div className="mt-2 space-y-1.5 border-t border-line/60 pt-2">
             <div className="flex flex-wrap items-center gap-2">

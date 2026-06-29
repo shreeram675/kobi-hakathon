@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -9,6 +9,7 @@ import {
   Clock,
   DollarSign,
   GitCompareArrows,
+  History,
   Hash,
   Loader2,
   CheckCircle2,
@@ -25,9 +26,11 @@ import { PipelineGraph } from "@/components/PipelineGraph";
 import { StageDetailPanel } from "@/components/StageDetailPanel";
 import { ErrorRail } from "@/components/ErrorRail";
 import { ConverseThread } from "@/components/ConverseThread";
+import { SingleProgramBriefPanel } from "@/components/SingleProgramBriefPanel";
 import { ClarificationPanel } from "@/components/ClarificationPanel";
 import { ProgramQueuePanel } from "@/components/ProgramQueuePanel";
 import { useRun, useStopRun, useRetryRun } from "@/lib/hooks";
+import { DownloadPDFButton } from "@/components/DownloadPDFButton";
 import { STAGE_IDS, PIPELINE_STAGES, type StageId } from "@/lib/schema";
 import { cn, elapsed } from "@/lib/format";
 import type { AgentState, CostReport, RunMode } from "@/lib/types";
@@ -61,6 +64,46 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
   const [focused, setFocused] = useState<StageId | null>(null);
   const [selectedProgramIdx, setSelectedProgramIdx] = useState(0);
   const [, setTick] = useState(0);
+  const [leftPct, setLeftPct] = useState(34);
+  const [isDesktop, setIsDesktop] = useState(false);
+  const isDragging = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    setIsDesktop(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!isDragging.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const raw = ((e.clientX - rect.left) / rect.width) * 100;
+      setLeftPct(Math.min(65, Math.max(18, raw)));
+    };
+    const onUp = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
 
   useEffect(() => {
     if (state?.status !== "running" && state?.status !== "clarification_needed") return;
@@ -116,6 +159,9 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
             </Button>
           </Link>
         )}
+        {!isComparison && state.status === "done" && (
+          <DownloadPDFButton state={state} variant="single" />
+        )}
         {(state.status === "running" || state.status === "clarification_needed") && (
           <Button
             size="sm"
@@ -154,6 +200,11 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
             Retry
           </Button>
         )}
+        <Link href="/history">
+          <Button size="sm" variant="ghost" className="text-white hover:bg-white/10">
+            <History className="h-4 w-4" /> History
+          </Button>
+        </Link>
         <Link href="/">
           <Button size="sm" variant="outline">
             <ArrowLeft className="h-4 w-4" /> New analysis
@@ -161,9 +212,12 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
         </Link>
       </Topbar>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(280px,34%)_1fr]">
+      <div ref={containerRef} className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* LEFT: pipeline graph + status */}
-        <div className="flex min-h-0 flex-col border-b border-line bg-white lg:border-b-0 lg:border-r lg:border-line">
+        <div
+          className="flex min-h-0 flex-col border-b border-line bg-white lg:border-b-0 flex-shrink-0"
+          style={isDesktop ? { width: `${leftPct}%` } : undefined}
+        >
           <StatusBar state={state} doneCount={doneCount} pct={pct} />
 
           {/* progress track */}
@@ -240,8 +294,17 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
           )}
         </div>
 
+        {/* Drag handle — desktop only */}
+        <div
+          className="hidden lg:flex items-center justify-center w-[5px] shrink-0 cursor-col-resize group relative z-10 bg-line hover:bg-teal/40 active:bg-teal/60 transition-colors"
+          onMouseDown={onDividerMouseDown}
+        >
+          <div className="absolute inset-y-0 -left-1.5 -right-1.5" />
+          <div className="h-8 w-[3px] rounded-full bg-ink/20 group-hover:bg-teal/60 transition-colors" />
+        </div>
+
         {/* RIGHT: stage detail */}
-        <div className="min-h-0 overflow-y-auto scroll-thin bg-canvas px-4 py-5 sm:px-5 lg:px-7 lg:py-6">
+        <div className="min-h-0 flex-1 overflow-y-auto scroll-thin bg-canvas px-4 py-5 sm:px-5 lg:px-7 lg:py-6">
           <div className="mx-auto max-w-4xl space-y-5">
 
             {/* ── Comparison queue panel ── */}
@@ -317,6 +380,14 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
                 programStatuses={compRun.program_statuses as string[]}
                 selectedIdx={selectedProgramIdx}
                 onSelect={(idx) => { setSelectedProgramIdx(idx); setFocused(null); }}
+              />
+            )}
+
+            {/* ── Single-program intelligence brief ── */}
+            {!isComparison && state.status === "done" && state.final_brief && (
+              <SingleProgramBriefPanel
+                programName={state.program_name}
+                fieldReport={state.field_report}
               />
             )}
 
@@ -755,6 +826,11 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-canvas">
       <Topbar>
+        <Link href="/history">
+          <Button size="sm" variant="ghost" className="text-white hover:bg-white/10">
+            <History className="h-4 w-4" /> History
+          </Button>
+        </Link>
         <Link href="/">
           <Button size="sm" variant="outline">
             <ArrowLeft className="h-4 w-4" /> Home

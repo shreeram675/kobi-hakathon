@@ -1,6 +1,6 @@
-from retrieval import canonicalize_url, retrieve_urls
-from retrieval import TavilyRestClient
-from schemas import SearchQuery
+from pipeline.stages.retrieval import canonicalize_url, retrieve_urls
+from pipeline.stages.retrieval import TavilyRestClient
+from core.schemas import SearchQuery
 from unittest.mock import patch
 
 import pytest

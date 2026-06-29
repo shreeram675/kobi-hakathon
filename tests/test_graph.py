@@ -1,5 +1,5 @@
-import graph
-from schemas import (
+import pipeline.graph as graph
+from core.schemas import (
     FirecrawlScrapeOutput,
     QueryGenerationOutput,
     RetrievalOutput,

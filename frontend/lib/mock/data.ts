@@ -804,6 +804,7 @@ export function buildFullState(
       unsupported_sentences: [],
     },
     comparison_output: null,
+    comparison_brief: null,
     conversation_answer: null,
     errors,
     created_at: createdAt,

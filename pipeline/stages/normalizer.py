@@ -9,7 +9,7 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from schemas import ExtractedField, ExtractedObjectPacket, NormalizedObjectPacket, now_iso
+from core.schemas import ExtractedField, ExtractedObjectPacket, NormalizedObjectPacket, now_iso
 from .extractor import SchemaConfig
 
 

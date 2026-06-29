@@ -158,7 +158,7 @@ def build_app_ratings_packet(result: AppRatingsResult, program_name: str) -> dic
     if not result.found_any:
         return None
 
-    from schemas import ExtractedField, NormalizedObjectPacket
+    from core.schemas import ExtractedField, NormalizedObjectPacket
 
     combined_rating = _combined_rating_string(result)
     source_url = _synthetic_source_url(result)

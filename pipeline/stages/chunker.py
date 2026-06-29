@@ -14,7 +14,7 @@ from __future__ import annotations
 from hashlib import sha256
 import re
 
-from schemas import RawDocument, SemanticChunk
+from core.schemas import RawDocument, SemanticChunk
 from .raw_store import count_words
 
 

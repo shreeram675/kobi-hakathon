@@ -11,6 +11,7 @@ import {
   fetchRun,
   fetchRunHistory,
   fetchRuns,
+  generateComparisonBrief,
   postCompareConverse,
   postConverse,
   postClarify,
@@ -121,6 +122,16 @@ export function useCompareConverse(runId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (message: string) => postCompareConverse(runId, message),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["run", runId] });
+    },
+  });
+}
+
+export function useGenerateBrief(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => generateComparisonBrief(runId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["run", runId] });
     },
