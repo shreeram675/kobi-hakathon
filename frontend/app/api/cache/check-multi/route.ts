@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const BACKEND = process.env.BACKEND_URL ?? "http://localhost:8000";
+const BACKEND = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
 
 export const dynamic = "force-dynamic";
 

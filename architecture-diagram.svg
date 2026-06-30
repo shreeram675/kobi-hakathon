@@ -1,0 +1,170 @@
+<svg viewBox="0 0 1040 438" xmlns="http://www.w3.org/2000/svg" width="1040" height="438" style="background:#1a1f2e;" font-family="'Segoe UI',Arial,sans-serif">
+  <defs>
+    <marker id="ah"  markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#E8643E"/></marker>
+    <marker id="ahg" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#7ec8a0"/></marker>
+    <marker id="ahd" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#8888ff"/></marker>
+    <marker id="ahw" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#888"/></marker>
+  </defs>
+
+  <!-- SECTION LABEL 1 -->
+  <text x="8" y="14" font-size="9" fill="#E8643E" font-weight="700" letter-spacing="1.5">① RETRIEVAL PIPELINE</text>
+
+  <!-- NODE 1: User Query -->
+  <rect x="8"   y="20" width="90"  height="54" rx="7" fill="#12192b" stroke="#666" stroke-width="1.3"/>
+  <text x="53"  y="42" font-size="11" fill="#aaa" text-anchor="middle" font-weight="600">USER</text>
+  <text x="53"  y="56" font-size="11" fill="#aaa" text-anchor="middle" font-weight="600">QUERY</text>
+  <text x="53"  y="70" font-size="9"  fill="#555" text-anchor="middle">any program</text>
+
+  <!-- NODE 2: Input Validator -->
+  <rect x="130" y="20" width="118" height="54" rx="7" fill="#12192b" stroke="#E8643E" stroke-width="1.5"/>
+  <text x="189" y="40" font-size="11" fill="#fff"  text-anchor="middle" font-weight="700">INPUT VALIDATOR</text>
+  <text x="189" y="54" font-size="9"  fill="#E8643E" text-anchor="middle">LLaMA 3.1-8B · Groq</text>
+  <text x="189" y="66" font-size="8.5" fill="#888" text-anchor="middle">normalise · confidence score</text>
+
+  <!-- CACHE BADGE -->
+  <rect x="262" y="26" width="76" height="18" rx="4" fill="#1a1f3a" stroke="#8888ff" stroke-width="1"/>
+  <text x="300" y="38" font-size="8" fill="#8888ff" text-anchor="middle" font-weight="600">SQLite CACHE CHECK</text>
+  <line x1="300" y1="44" x2="300" y2="54" stroke="#8888ff" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#ahd)"/>
+  <text x="302" y="63" font-size="7.5" fill="#8888ff">HIT → skip</text>
+
+  <!-- NODE 3: Query Generator -->
+  <rect x="280" y="20" width="118" height="54" rx="7" fill="#12192b" stroke="#E8643E" stroke-width="1.5"/>
+  <text x="339" y="40" font-size="11" fill="#fff"  text-anchor="middle" font-weight="700">QUERY GENERATOR</text>
+  <text x="339" y="54" font-size="9"  fill="#E8643E" text-anchor="middle">Gemini 2.5 Flash</text>
+  <text x="339" y="66" font-size="8.5" fill="#888" text-anchor="middle">field-difficulty tiers · ≤15 q</text>
+
+  <!-- NODE 4: Tavily -->
+  <rect x="430" y="20" width="114" height="54" rx="7" fill="#12192b" stroke="#E8643E" stroke-width="1.5"/>
+  <text x="487" y="40" font-size="11" fill="#fff"  text-anchor="middle" font-weight="700">TAVILY</text>
+  <text x="487" y="54" font-size="9"  fill="#E8643E" text-anchor="middle">Web Search API</text>
+  <text x="487" y="66" font-size="8.5" fill="#888" text-anchor="middle">dedup URL set · source tags</text>
+
+  <!-- NODE 5: Firecrawl -->
+  <rect x="576" y="20" width="116" height="54" rx="7" fill="#12192b" stroke="#E8643E" stroke-width="1.5"/>
+  <text x="634" y="40" font-size="11" fill="#fff"  text-anchor="middle" font-weight="700">FIRECRAWL</text>
+  <text x="634" y="54" font-size="9"  fill="#E8643E" text-anchor="middle">JS render · PDF parse</text>
+  <text x="634" y="66" font-size="8.5" fill="#888" text-anchor="middle">priority-sorted · 12 URL cap</text>
+
+  <!-- NODE 6: Ingest Pipeline -->
+  <rect x="724" y="20" width="122" height="54" rx="7" fill="#12192b" stroke="#E8643E" stroke-width="1.5"/>
+  <text x="785" y="38" font-size="11" fill="#fff"  text-anchor="middle" font-weight="700">INGEST PIPELINE</text>
+  <text x="785" y="52" font-size="9"  fill="#E8643E" text-anchor="middle">Chunk → Extract</text>
+  <text x="785" y="64" font-size="8.5" fill="#888" text-anchor="middle">Normalize → SHA-256 upsert</text>
+
+  <!-- SQLite storage badge -->
+  <rect x="858" y="24" width="84" height="30" rx="4" fill="#1a1130" stroke="#9b7ec8" stroke-width="1"/>
+  <text x="900" y="37" font-size="8.5" fill="#9b7ec8" text-anchor="middle" font-weight="600">SQLite WAL</text>
+  <text x="900" y="49" font-size="7.5" fill="#666"    text-anchor="middle">claim + provenance store</text>
+  <line x1="846" y1="39" x2="858" y2="39" stroke="#9b7ec8" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- TOP ROW ARROWS -->
+  <line x1="98"  y1="47" x2="128" y2="47" stroke="#E8643E" stroke-width="1.5" marker-end="url(#ah)"/>
+  <line x1="248" y1="47" x2="278" y2="47" stroke="#E8643E" stroke-width="1.5" marker-end="url(#ah)"/>
+  <line x1="398" y1="47" x2="428" y2="47" stroke="#E8643E" stroke-width="1.5" marker-end="url(#ah)"/>
+  <line x1="544" y1="47" x2="574" y2="47" stroke="#E8643E" stroke-width="1.5" marker-end="url(#ah)"/>
+  <line x1="692" y1="47" x2="722" y2="47" stroke="#E8643E" stroke-width="1.5" marker-end="url(#ah)"/>
+
+  <!-- CLARIFY LOOP -->
+  <rect x="130" y="116" width="118" height="40" rx="6" fill="#1a1f2e" stroke="#f0a060" stroke-width="1.2" stroke-dasharray="4,2"/>
+  <text x="189" y="132" font-size="9.5" fill="#f0a060" text-anchor="middle" font-weight="600">CLARIFY LOOP</text>
+  <text x="189" y="147" font-size="8"   fill="#888"    text-anchor="middle">asks user to refine query</text>
+  <line x1="189" y1="74" x2="189" y2="114" stroke="#f0a060" stroke-width="1.2" stroke-dasharray="4,2" marker-end="url(#ahw)"/>
+  <text x="193" y="97" font-size="8" fill="#f0a060">conf &lt; 0.90</text>
+  <path d="M248,136 Q310,136 310,47 L280,47" stroke="#f0a060" stroke-width="1" stroke-dasharray="3,2" fill="none" marker-end="url(#ahw)"/>
+
+  <!-- SECTION LABEL 2 -->
+  <text x="8" y="108" font-size="9" fill="#E8643E" font-weight="700" letter-spacing="1.5">② CONFLICT ADJUDICATION</text>
+
+  <!-- Arrow: Ingest → Conflict Detector -->
+  <path d="M785,74 L785,118 L530,118 L530,130" stroke="#E8643E" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+
+  <!-- CONFLICT DETECTOR -->
+  <rect x="390" y="130" width="280" height="48" rx="7" fill="#12192b" stroke="#E8643E" stroke-width="1.5"/>
+  <text x="530" y="151" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">CONFLICT DETECTOR</text>
+  <text x="530" y="168" font-size="9"  fill="#888" text-anchor="middle">field-level diff · volatility scoring · recency vs authority weighting</text>
+
+  <!-- Arrow: Conflict → Diamond -->
+  <line x1="530" y1="178" x2="530" y2="202" stroke="#E8643E" stroke-width="1.5" marker-end="url(#ah)"/>
+
+  <!-- DECISION DIAMOND -->
+  <polygon points="530,196 646,226 530,256 414,226" fill="#E8643E" opacity="0.9"/>
+  <text x="530" y="221" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="700">CONFIDENCE</text>
+  <text x="530" y="235" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="700">GAP &gt; 0.20 ?</text>
+
+  <!-- LEFT BRANCH: AUTO-RESOLVE -->
+  <path d="M414,226 L200,226 L200,266" stroke="#7ec8a0" stroke-width="1.5" fill="none" marker-end="url(#ahg)"/>
+  <text x="300" y="218" font-size="9" fill="#7ec8a0" text-anchor="middle" font-weight="600">YES — auto</text>
+
+  <rect x="110" y="266" width="180" height="54" rx="7" fill="#0d2018" stroke="#7ec8a0" stroke-width="1.5"/>
+  <text x="200" y="287" font-size="11" fill="#7ec8a0" text-anchor="middle" font-weight="700">AUTO-RESOLVE</text>
+  <text x="200" y="302" font-size="8.5" fill="#7ec8a0" text-anchor="middle">higher confidence source wins</text>
+  <text x="200" y="314" font-size="8"   fill="#555"    text-anchor="middle">saves Groq API calls</text>
+
+  <!-- RIGHT BRANCH: DEBATE -->
+  <path d="M646,226 L840,226 L840,266" stroke="#E8643E" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+  <text x="745" y="218" font-size="9" fill="#E8643E" text-anchor="middle" font-weight="600">NO — debate</text>
+
+  <rect x="742" y="266" width="196" height="54" rx="7" fill="#12192b" stroke="#E8643E" stroke-width="1.8"/>
+  <text x="840" y="285" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">5-STEP ADVERSARIAL DEBATE</text>
+  <text x="840" y="299" font-size="8.5" fill="#E8643E" text-anchor="middle">Advocate A · Advocate B</text>
+  <text x="840" y="311" font-size="8.5" fill="#E8643E" text-anchor="middle">Rebuttal A · Rebuttal B</text>
+
+  <!-- Arrow: Debate → Judge -->
+  <line x1="840" y1="320" x2="840" y2="342" stroke="#E8643E" stroke-width="1.5" marker-end="url(#ah)"/>
+
+  <!-- LLAMA JUDGE -->
+  <rect x="742" y="342" width="196" height="48" rx="7" fill="#1a0a0a" stroke="#ff6060" stroke-width="1.5"/>
+  <text x="840" y="362" font-size="11" fill="#ff9090" text-anchor="middle" font-weight="700">LLAMA JUDGE</text>
+  <text x="840" y="376" font-size="8.5" fill="#888" text-anchor="middle">llama3-70b · verdict: A / B / FLAG</text>
+  <text x="840" y="387" font-size="8"   fill="#555" text-anchor="middle">TF-IDF cosine gate on rebuttals</text>
+
+  <!-- Arrows into Field Report -->
+  <path d="M200,320 L200,372 L368,372" stroke="#7ec8a0" stroke-width="1.5" fill="none" marker-end="url(#ahg)"/>
+  <path d="M742,366 L560,366" stroke="#ff9090" stroke-width="1.5" fill="none" marker-end="url(#ahg)"/>
+
+  <!-- ADJUDICATED FIELD REPORT -->
+  <rect x="368" y="350" width="234" height="56" rx="8" fill="#0d2018" stroke="#7ec8a0" stroke-width="2"/>
+  <text x="485" y="373" font-size="13" fill="#7ec8a0" text-anchor="middle" font-weight="800">ADJUDICATED FIELD REPORT</text>
+  <text x="485" y="389" font-size="9"  fill="#7ec8a0" text-anchor="middle">30+ canonical fields · source-cited · provenance-tagged</text>
+  <text x="485" y="401" font-size="8"  fill="#3a7a5a" text-anchor="middle">null when unsupported — never hallucinated</text>
+
+  <!-- SECTION LABEL 3 -->
+  <text x="8" y="424" font-size="9" fill="#E8643E" font-weight="700" letter-spacing="1.5">③ OUTPUTS</text>
+
+  <!-- Output arrows -->
+  <path d="M430,406 L340,406 L340,418" stroke="#7ec8a0" stroke-width="1.2" fill="none" marker-end="url(#ahg)"/>
+  <path d="M540,406 L630,406 L630,418" stroke="#7ec8a0" stroke-width="1.2" fill="none" marker-end="url(#ahg)"/>
+  <line x1="485" y1="406" x2="485" y2="418" stroke="#7ec8a0" stroke-width="1.2" marker-end="url(#ahg)"/>
+
+  <!-- Brief Generator -->
+  <rect x="218" y="418" width="142" height="18" rx="4" fill="#0d2018" stroke="#7ec8a0" stroke-width="1"/>
+  <text x="289" y="431" font-size="8.5" fill="#7ec8a0" text-anchor="middle" font-weight="600">INTEL BRIEF GENERATOR</text>
+
+  <!-- Compare Mode -->
+  <rect x="388" y="418" width="142" height="18" rx="4" fill="#0d2018" stroke="#7ec8a0" stroke-width="1"/>
+  <text x="459" y="431" font-size="8.5" fill="#7ec8a0" text-anchor="middle" font-weight="600">COMPARE MODE (2 programs)</text>
+
+  <!-- Converse Module -->
+  <rect x="558" y="418" width="142" height="18" rx="4" fill="#0d2018" stroke="#7ec8a0" stroke-width="1"/>
+  <text x="629" y="431" font-size="8.5" fill="#7ec8a0" text-anchor="middle" font-weight="600">CONVERSE MODULE</text>
+
+  <!-- LEGEND -->
+  <rect x="952" y="130" width="84" height="136" rx="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+  <text x="994" y="145" font-size="8" fill="#888" text-anchor="middle" font-weight="700" letter-spacing="1">LEGEND</text>
+  <rect x="960" y="152" width="14" height="10" rx="2" fill="#12192b" stroke="#E8643E" stroke-width="1.2"/>
+  <text x="979" y="161" font-size="8" fill="#aaa">Process node</text>
+  <polygon points="967,176 975,170 983,176 975,182" fill="#E8643E"/>
+  <text x="989" y="178" font-size="8" fill="#aaa">Decision</text>
+  <rect x="960" y="188" width="14" height="10" rx="2" fill="#0d2018" stroke="#7ec8a0" stroke-width="1.2"/>
+  <text x="979" y="197" font-size="8" fill="#aaa">Output</text>
+  <rect x="960" y="206" width="14" height="10" rx="2" fill="#1a1a1a" stroke="#9b7ec8" stroke-width="1"/>
+  <text x="979" y="215" font-size="8" fill="#aaa">Storage</text>
+  <line x1="960" y1="228" x2="974" y2="228" stroke="#f0a060" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="979" y="231" font-size="8" fill="#aaa">Conditional</text>
+
+  <!-- LangGraph label -->
+  <rect x="952" y="274" width="84" height="30" rx="5" fill="rgba(232,100,62,0.08)" stroke="rgba(232,100,62,0.3)" stroke-width="1"/>
+  <text x="994" y="287" font-size="8" fill="#E8643E" text-anchor="middle" font-weight="700">LangGraph</text>
+  <text x="994" y="298" font-size="7.5" fill="#666" text-anchor="middle">state machine</text>
+
+</svg>

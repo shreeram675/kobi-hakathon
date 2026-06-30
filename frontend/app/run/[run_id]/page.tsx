@@ -448,7 +448,10 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
             run_datetime: state.cache_hit.run_date ?? undefined,
           }}
           onDecision={(choice) => {
-            if (choice === "cancel") return;
+            if (choice === "cancel") {
+              stop.mutate();
+              return;
+            }
             cacheDecision.mutate(choice === "view" ? "use_cache" : "fresh");
           }}
         />

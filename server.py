@@ -914,27 +914,30 @@ def run_pipeline(record: RunRecord) -> None:
             return  # run_status already "cancelled"
 
         if success:
-            program_name = record.state.get("program_name") or record.user_input
-            # Save completed analysis to cache
-            snap = _make_program_state_snapshot(record)
-            _save_program_snapshot_to_db(
-                program_name,
-                record.state.get("brand"),
-                record.state.get("country_or_region"),
-                snap,
-            )
-            with record.lock:
-                record.conversation = [
-                    {
-                        "role": "assistant",
-                        "message": (
-                            f"I've analysed {program_name}. Ask me anything about its earn "
-                            "rates, tiers, partners, or member sentiment — I'll answer only "
-                            "from the extracted claims."
-                        ),
-                        "created_at": now_iso(),
-                    }
-                ]
+            # Skip snapshot save when result was served from cache — cached_response
+            # already has the complete state and record.state only has input_validator output.
+            if record.cached_response is None:
+                program_name = record.state.get("program_name") or record.user_input
+                # Save completed analysis to cache
+                snap = _make_program_state_snapshot(record)
+                _save_program_snapshot_to_db(
+                    program_name,
+                    record.state.get("brand"),
+                    record.state.get("country_or_region"),
+                    snap,
+                )
+                with record.lock:
+                    record.conversation = [
+                        {
+                            "role": "assistant",
+                            "message": (
+                                f"I've analysed {program_name}. Ask me anything about its earn "
+                                "rates, tiers, partners, or member sentiment — I'll answer only "
+                                "from the extracted claims."
+                            ),
+                            "created_at": now_iso(),
+                        }
+                    ]
 
         with record.lock:
             record.run_status = "done" if success else "error"
@@ -1841,6 +1844,21 @@ def get_run(run_id: str) -> dict[str, Any]:
             payload = _compare_run_response_from_row(row) if row.get("mode") == "compare" else _run_response_from_row(row)
             if payload is not None:
                 return payload
+            # Run exists in DB but has no persisted state (server restarted mid-run).
+            # Return a synthetic cancelled response so the frontend can show a retry banner.
+            base = build_initial_state(row.get("user_input") or "", RunMode(row.get("mode") or "single"))
+            base["run_id"] = run_id
+            base["user_input"] = row.get("user_input") or ""
+            base["program_name"] = row.get("program_name") or row.get("user_input") or ""
+            base["status"] = "cancelled"
+            base["active_stage"] = None
+            base["stage_status"] = {s: "idle" for s in UI_STAGES}
+            base["errors"] = []
+            base["conversation"] = []
+            base["comparison_conversation"] = []
+            base["created_at"] = row.get("created_at") or now_iso()
+            base["updated_at"] = row.get("updated_at") or now_iso()
+            return {k: _ser(v) for k, v in base.items()}
         snapshot = _db.find_program_snapshot_by_run_id(_db_conn, run_id)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="run not found")

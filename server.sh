@@ -60,15 +60,37 @@ check_and_repair_db() {
 
 start_backend() {
   check_and_repair_db
-  echo "Starting FastAPI backend on http://127.0.0.1:8001 ..."
+  # Free port 8000 if something else is holding it
+  local stale_pid
+  stale_pid=$(lsof -ti tcp:8000 2>/dev/null || true)
+  if [[ -n "$stale_pid" ]]; then
+    echo "Freeing port 8000 (pid $stale_pid)..."
+    kill -9 $stale_pid 2>/dev/null || true
+    sleep 0.5
+  fi
+  echo "Starting FastAPI backend on http://127.0.0.1:8000 ..."
   cd "$ROOT"
-  uvicorn server:app --host 127.0.0.1 --port 8001 --reload \
+  uvicorn server:app --host 127.0.0.1 --port 8000 --reload \
+    --reload-dir "$ROOT" \
+    --reload-exclude "*.venv*" \
+    --reload-exclude "*/frontend/*" \
+    --reload-exclude "*/logs/*" \
+    --reload-exclude "*/node_modules/*" \
+    --reload-exclude "*/__pycache__/*" \
     >> "$BACKEND_LOG" 2>&1 &
   echo $! > "$BACKEND_PID_FILE"
   echo "  backend pid: $(cat "$BACKEND_PID_FILE")  (log: logs/backend.log)"
 }
 
 start_frontend() {
+  # Free port 3000 if something else is holding it
+  local stale_pid
+  stale_pid=$(lsof -ti tcp:3000 2>/dev/null || true)
+  if [[ -n "$stale_pid" ]]; then
+    echo "Freeing port 3000 (pid $stale_pid)..."
+    kill -9 $stale_pid 2>/dev/null || true
+    sleep 0.5
+  fi
   echo "Starting Next.js frontend on http://localhost:3000 ..."
   cd "$ROOT/frontend"
   npm run dev >> "$FRONTEND_LOG" 2>&1 &

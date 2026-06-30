@@ -41,16 +41,6 @@ export async function fetchRunHistory(): Promise<RunHistoryEntry[]> {
   return asJson<RunHistoryEntry[]>(res);
 }
 
-export async function checkCache(q: string): Promise<CacheCheckResult> {
-  const res = await fetch(`/api/cache/check?q=${encodeURIComponent(q)}`, { cache: "no-store" });
-  return asJson<CacheCheckResult>(res);
-}
-
-export async function checkCacheMulti(programs: string[]): Promise<CompareCacheCheckItem[]> {
-  const params = programs.map((p) => `programs=${encodeURIComponent(p)}`).join("&");
-  const res = await fetch(`/api/cache/check-multi?${params}`, { cache: "no-store" });
-  return asJson<CompareCacheCheckItem[]>(res);
-}
 
 export async function postConverse(
   runId: string,

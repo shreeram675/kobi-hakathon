@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  @page {
+    size: 1280px 720px;
+    margin: 0;
+  }
+
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .slide {
+    width: 1280px;
+    height: 720px;
+    position: relative;
+    overflow: hidden;
+    page-break-after: always;
+    page-break-inside: avoid;
+  }
+
+  .orange { color: #E8643E; }
+
+  /* ── SLIDE 1 — TITLE ── */
+  .s1 { background: #1a1f2e; display: flex; flex-direction: row; }
+  .s1-left {
+    flex: 1; padding: 56px 60px;
+    display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .s1-right {
+    width: 320px;
+    background: #E8643E;
+    border-radius: 0 0 0 60%;
+    position: relative;
+  }
+  .s1-right::after {
+    content: '';
+    display: block;
+    width: 240px; height: 240px;
+    background: rgba(0,0,0,0.15);
+    border-radius: 50%;
+    position: absolute;
+    bottom: -70px; right: -70px;
+  }
+  .s1-logo { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: #E8643E; text-transform: uppercase; }
+  .s1-sub  { font-size: 15px; color: #999; margin-top: 4px; }
+  .s1-title { font-size: 52px; font-weight: 800; line-height: 1.05; color: #fff; margin-top: 0; }
+  .s1-track { font-size: 17px; color: #bbb; margin-top: 14px; }
+  .s1-team {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(232,100,62,0.35);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-top: 28px;
+  }
+  .s1-team h4 { color: #E8643E; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; }
+  .s1-team p  { color: #ccc; font-size: 14px; line-height: 1.8; }
+  .s1-inst { color: #777; font-size: 13px; margin-top: 18px; }
+
+  /* ── shared light slide ── */
+  .s-light { background: #faf7f4; color: #222; display: flex; flex-direction: column; }
+  .s-dark  { background: #1a1f2e; color: #e0e0e0; display: flex; flex-direction: column; }
+
+  .slide-header {
+    padding: 28px 56px 16px;
+    border-bottom: 3px solid #E8643E;
+    flex-shrink: 0;
+  }
+  .slide-header h2 { font-size: 30px; font-weight: 800; }
+  .s-light .slide-header h2 { color: #222; }
+  .s-dark  .slide-header h2 { color: #fff; }
+
+  .slide-content {
+    flex: 1;
+    padding: 18px 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow: hidden;
+  }
+
+  .slide-footer {
+    background: #1a1f2e;
+    padding: 8px 56px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .slide-footer .brand { font-size: 10px; color: #E8643E; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  .slide-footer .pg    { color: #555; font-size: 11px; }
+
+  .two-col   { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+  .card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 16px 18px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+  }
+  .card h4 { font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #E8643E; margin-bottom: 8px; }
+  .card ul  { padding-left: 16px; }
+  .card li  { font-size: 12.5px; color: #444; line-height: 1.65; }
+  .card p   { font-size: 12.5px; color: #444; line-height: 1.6; }
+
+  .dark-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .dark-card h4 { font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #E8643E; margin-bottom: 7px; }
+  .dark-card ul  { padding-left: 15px; }
+  .dark-card li  { font-size: 12px; color: #bbb; line-height: 1.6; }
+  .dark-card p   { font-size: 12px; color: #bbb; line-height: 1.55; }
+
+  .banner {
+    background: #fff3ee;
+    border-left: 4px solid #E8643E;
+    border-radius: 6px;
+    padding: 12px 16px;
+  }
+  .banner p { font-size: 12.5px; color: #555; line-height: 1.6; font-style: italic; }
+
+  /* pipeline */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    flex-wrap: nowrap;
+  }
+  .pnode {
+    background: rgba(255,255,255,0.05);
+    border: 1.5px solid #E8643E;
+    border-radius: 7px;
+    padding: 8px 10px;
+    text-align: center;
+    min-width: 100px;
+  }
+  .pnode .num  { font-size: 9px; color: #E8643E; font-weight: 700; letter-spacing: 0.8px; margin-bottom: 3px; }
+  .pnode .name { font-size: 11px; font-weight: 600; color: #fff; line-height: 1.3; }
+  .pnode .sub  { font-size: 9.5px; color: #aaa; margin-top: 2px; line-height: 1.3; }
+  .arrow { color: #E8643E; font-size: 16px; padding: 0 4px; }
+
+  /* metrics */
+  .metric-row { display: flex; gap: 12px; }
+  .metric {
+    flex: 1;
+    background: #fff;
+    border-radius: 8px;
+    padding: 12px 8px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+  }
+  .metric .val { font-size: 24px; font-weight: 800; color: #E8643E; }
+  .metric .lbl { font-size: 10px; color: #666; margin-top: 3px; }
+
+  /* schema grid */
+  .schema-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  .schema-box {
+    background: #fff;
+    border-radius: 7px;
+    padding: 10px 12px;
+    border-top: 3px solid #E8643E;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+  }
+  .schema-box h5 { font-size: 9.5px; font-weight: 700; color: #E8643E; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px; }
+  .schema-box p  { font-size: 10.5px; color: #666; line-height: 1.45; }
+
+  /* activation table */
+  .activation-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  .activation-table th {
+    background: #E8643E; color: #fff;
+    padding: 7px 12px; text-align: left;
+    font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase;
+  }
+  .activation-table td {
+    padding: 7px 12px;
+    border-bottom: 1px solid #f0ece8;
+    color: #444; vertical-align: top; line-height: 1.45;
+  }
+  .activation-table tr:nth-child(even) td { background: #fdf9f6; }
+
+  /* demo steps */
+  .demo-step {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(232,100,62,0.3);
+    border-radius: 8px;
+    padding: 13px 18px;
+  }
+  .demo-step h4 { color: #E8643E; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 5px; }
+  .demo-step p  { font-size: 12.5px; color: #ccc; line-height: 1.55; }
+  .demo-step code { font-family: monospace; color: #7ec8a0; font-size: 11px; }
+
+  /* contrib bar */
+  .contrib-bar { background: #fff; border-radius: 7px; padding: 12px 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+  .contrib-bar p { font-size: 12px; color: #444; line-height: 1.65; }
+  .contrib-bar strong { color: #E8643E; }
+
+  mono { font-family: 'Courier New', monospace; font-size: 11px; color: #E8643E; }
+  mono-g { font-family: 'Courier New', monospace; font-size: 11px; color: #7ec8a0; }
+</style>
+</head>
+<body>
+
+<!-- ════ SLIDE 1 — TITLE ════ -->
+<div class="slide s1">
+  <div class="s1-left">
+    <div>
+      <div class="s1-logo">Kobie Launchpad AI Hackathon</div>
+      <div class="s1-sub">Solution Presentation</div>
+    </div>
+    <div>
+      <div class="s1-title">Autonomous<br>Competitive<br>Intelligence<br>Agent</div>
+      <div class="s1-track">Track: Loyalty Program Competitive Intelligence · Phase 2</div>
+      <div class="s1-team">
+        <h4>Team Members</h4>
+        <p>
+          Shreyas R Gowda &nbsp;—&nbsp; Pipeline orchestration, extraction schema, reconciliation logic<br>
+          Shreeram G Patgar &nbsp;—&nbsp; Retrieval layer, source handling, deduplication<br>
+          Naveen G &nbsp;—&nbsp; Output layer (brief generation), evaluation, sentiment sourcing
+        </p>
+      </div>
+      <div class="s1-inst">R.V. College of Engineering (RVCE), Bengaluru</div>
+    </div>
+  </div>
+  <div class="s1-right"></div>
+</div>
+
+
+<!-- ════ SLIDE 2 — PROBLEM & APPROACH ════ -->
+<div class="slide s-light">
+  <div class="slide-header"><h2>Problem &amp; Our Approach</h2></div>
+  <div class="slide-content">
+    <div class="two-col">
+      <div class="card">
+        <h4>💡 The Core Challenge</h4>
+        <ul>
+          <li>Loyalty programs are documented <strong>inconsistently</strong> across official pages, T&amp;C PDFs, review forums, and SEO blogs</li>
+          <li>Manually researching one program to a competitive standard takes <strong>4–8 hours</strong> and the result goes stale quickly</li>
+          <li>Sources contradict each other — earn rates, point values, and tier rules differ site-to-site; no existing tool surfaces these conflicts</li>
+          <li>Programs rebrand and revise rules; without temporal awareness, intelligence decays silently</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>⚙️ Our Key Insight</h4>
+        <ul>
+          <li>Treat every extracted fact as a <em>claim with provenance</em> — not a value to overwrite</li>
+          <li>Use an <strong>adversarial debate engine</strong> (Advocate A vs B → LLaMA Judge) to resolve conflicts transparently; the LLM can never invent a third value</li>
+          <li>Separate retrieval, scraping, and extraction so each stage is independently replaceable</li>
+          <li>Hard rule: <code style="font-family:monospace;color:#E8643E;font-size:11px">null</code> when unknown — never hallucinated</li>
+          <li>Volatility weighting: earn rates weight recency; tier names weight authority</li>
+        </ul>
+      </div>
+    </div>
+    <div class="banner">
+      <p><strong>DATA QUALITY:</strong> Web coverage for smaller programs (regional airlines, fuel retailers) is sparse; sentiment fields from Reddit/Trustpilot can be noisy. We addressed this by tiering query budgets — spending retrieval effort on genuinely hard fields (earn rates, point values, differentiators) and flagging unsupported fields as <code style="font-family:monospace;font-size:11px">null / manual_review_needed</code> rather than fabricating values. Source-type round-robin (official → financial → forum → review) prevents the URL budget from collapsing into an SEO echo chamber.</p>
+    </div>
+  </div>
+  <div class="slide-footer">
+    <span class="brand">Kobie Launchpad AI Hackathon</span>
+    <span class="pg">1 / 6</span>
+  </div>
+</div>
+
+
+<!-- ════ SLIDE 3 — ARCHITECTURE ════ -->
+<div class="slide s-dark">
+  <div class="slide-header"><h2>Architecture &amp; Technical Design</h2></div>
+  <div class="slide-content" style="padding:14px 48px; gap:12px;">
+
+    <div class="pipeline">
+      <div class="pnode">
+        <div class="num">NODE 1</div>
+        <div class="name">Input<br>Validator</div>
+        <div class="sub">LLaMA 3.1-8B<br>Groq · identity resolution</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="pnode">
+        <div class="num">NODE 2</div>
+        <div class="name">Query<br>Generator</div>
+        <div class="sub">Gemini 2.5 Flash<br>≤15 Tavily queries</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="pnode">
+        <div class="num">NODE 3</div>
+        <div class="name">Tavily<br>Retrieval</div>
+        <div class="sub">Dedup URL set<br>+ source-type tags</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="pnode">
+        <div class="num">NODE 4</div>
+        <div class="name">Firecrawl<br>Scraper</div>
+        <div class="sub">Priority-sorted<br>budget cap · 12 URLs</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="pnode">
+        <div class="num">NODE 5</div>
+        <div class="name">Ingest<br>Pipeline</div>
+        <div class="sub">Raw Store → Chunk<br>→ Extract → Normalize</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="pnode">
+        <div class="num">NODE 6</div>
+        <div class="name">Conflict<br>Adjudication</div>
+        <div class="sub">Auto-resolve / 5-Step<br>Adversarial Debate</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="pnode" style="border-color:#7ec8a0;">
+        <div class="num" style="color:#7ec8a0;">OUTPUT</div>
+        <div class="name" style="color:#7ec8a0;">Intel Brief<br>+ Converse</div>
+        <div class="sub">Analyst-grade<br>structured report</div>
+      </div>
+    </div>
+
+    <div class="three-col">
+      <div class="dark-card">
+        <h4>Key Tech Choices</h4>
+        <ul>
+          <li><strong>LangGraph</strong> — state machine; node outputs immutable; errors isolated per node</li>
+          <li><strong>Gemini 2.5 Flash</strong> — query planning + structured extraction (fast, cost-effective at batch size)</li>
+          <li><strong>Groq / LLaMA 3-70B</strong> — low-latency debate advocates + judge</li>
+          <li><strong>Tavily + Firecrawl</strong> — search-then-scrape separation; Firecrawl handles PDFs natively</li>
+          <li><strong>SQLite + WAL mode</strong> — durable, portable, zero-ops persistence</li>
+        </ul>
+      </div>
+      <div class="dark-card">
+        <h4>Design Decisions</h4>
+        <ul>
+          <li>Field-level conflict detection — not object-level; catches earn-rate disagreements across different source packets</li>
+          <li>Auto-resolve at gap &gt; 0.20 — saves Groq calls; only truly ambiguous conflicts enter debate</li>
+          <li>Volatility weighting: HIGH fields (earn rates) weight recency 50%; LOW fields (tier names) weight authority 50%</li>
+          <li>SHA-256 identity hash → upsert dedup; re-scrapes update rather than duplicate</li>
+          <li>TF-IDF cosine gate before rebuttal — skips if arguments are already too similar</li>
+        </ul>
+      </div>
+      <div class="dark-card">
+        <h4>Error Handling</h4>
+        <ul>
+          <li>LLM JSON malformed → fallback to <code style="font-family:monospace;font-size:10px;color:#7ec8a0">FALLBACK_QUERIES[category]</code></li>
+          <li>Firecrawl 4xx/5xx → URL skipped, logged, pipeline continues</li>
+          <li>Chunks &lt;100 words filtered before SQLite write</li>
+          <li>Judge verdict must be A / B / FLAG — cannot synthesise a new value</li>
+          <li>Input confidence &lt;0.90 → clarification questions before retrieval begins</li>
+          <li>Any unsupported extraction field → <code style="font-family:monospace;font-size:10px;color:#7ec8a0">null</code>, never hallucinated</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+  <div class="slide-footer">
+    <span class="brand">Kobie Launchpad AI Hackathon</span>
+    <span class="pg">2 / 6</span>
+  </div>
+</div>
+
+
+<!-- ════ SLIDE 4 — RESULTS ════ -->
+<div class="slide s-light">
+  <div class="slide-header"><h2>Results &amp; Key Outputs</h2></div>
+  <div class="slide-content" style="gap:12px;">
+
+    <div class="metric-row">
+      <div class="metric"><div class="val">8</div><div class="lbl">Schema Object Groups</div></div>
+      <div class="metric"><div class="val">30+</div><div class="lbl">Canonical Fields Extracted</div></div>
+      <div class="metric"><div class="val">6</div><div class="lbl">LangGraph Pipeline Nodes</div></div>
+      <div class="metric"><div class="val">≤15</div><div class="lbl">Targeted Queries / Run</div></div>
+      <div class="metric"><div class="val">0.20</div><div class="lbl">Auto-resolve Gap Threshold</div></div>
+      <div class="metric"><div class="val">5-step</div><div class="lbl">Adversarial Debate Protocol</div></div>
+    </div>
+
+    <div class="schema-grid">
+      <div class="schema-box">
+        <h5>Program Basics</h5>
+        <p>name · brand · industry · type · geography · membership count</p>
+      </div>
+      <div class="schema-box">
+        <h5>Earn Mechanics</h5>
+        <p>base earn rate · bonus categories · non-transactional earn</p>
+      </div>
+      <div class="schema-box">
+        <h5>Burn Mechanics</h5>
+        <p>redemption options · thresholds · point value · expiry policy</p>
+      </div>
+      <div class="schema-box">
+        <h5>Tier System</h5>
+        <p>tier names · qualification criteria · benefits · qualification period</p>
+      </div>
+      <div class="schema-box">
+        <h5>Partnerships</h5>
+        <p>partners · partnership type · partnership details</p>
+      </div>
+      <div class="schema-box">
+        <h5>Digital Experience</h5>
+        <p>mobile app · app ratings · personalization · gamification</p>
+      </div>
+      <div class="schema-box">
+        <h5>Member Sentiment</h5>
+        <p>ratings · common praise · common complaints · sources checked</p>
+      </div>
+      <div class="schema-box">
+        <h5>Competitive Position</h5>
+        <p>key differentiators · weaknesses · closest competitors</p>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="card">
+        <h4>📊 Pipeline Performance</h4>
+        <ul>
+          <li>Full end-to-end run: Input → Adjudicated Field Report in a single pipeline execution</li>
+          <li>Conflict auto-resolution fires when confidence gap &gt; 0.20 (majority of conflicts)</li>
+          <li>5-step debate reserved for genuinely ambiguous conflicts (gap ≤ 0.20); judge returns A/B/FLAG — never an invented value</li>
+          <li>SHA-256 identity hash ensures re-scrapes update, not duplicate</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>✅ Validated Programs (Demo-Ready)</h4>
+        <ul>
+          <li><strong>Marriott Bonvoy</strong> — hotel · global · full extraction</li>
+          <li><strong>Delta SkyMiles</strong> — airline · United States</li>
+          <li><strong>United MileagePlus</strong> — airline · global</li>
+          <li><strong>Hilton Honors</strong> — hotel · global</li>
+          <li><strong>Myntra Insider</strong> — e-commerce · India</li>
+          <li><strong>Indigo 6E Rewards</strong> — airline · India</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+  <div class="slide-footer">
+    <span class="brand">Kobie Launchpad AI Hackathon</span>
+    <span class="pg">3 / 6</span>
+  </div>
+</div>
+
+
+<!-- ════ SLIDE 5 — BUSINESS IMPACT ════ -->
+<div class="slide s-light">
+  <div class="slide-header"><h2>Business Impact &amp; Activation</h2></div>
+  <div class="slide-content" style="gap:12px;">
+
+    <div class="two-col">
+      <div class="card">
+        <h4>🎯 Who This Is Built For</h4>
+        <ul>
+          <li><strong>Loyalty program strategists</strong> — benchmark earn/burn structures across 10+ competitors in minutes, not days</li>
+          <li><strong>Kobie consultants</strong> — enter any client meeting pre-loaded with a grounded, sourced competitive brief for any program worldwide</li>
+          <li><strong>Product &amp; partnership teams</strong> — identify partnership gaps and differentiator weaknesses at the field level</li>
+          <li><strong>Analysts</strong> — trace every claim to a source URL and access date; no black-box outputs</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>📈 The Business Case</h4>
+        <ul>
+          <li>Manual competitive research: <strong>4–8 hours per program</strong> → ACI Agent: <strong>&lt;5 minutes</strong></li>
+          <li>Full provenance on every claim = compliance-safe use in client deliverables</li>
+          <li>Adjudication audit trail (advocate arguments + judge verdict) makes reasoning reviewable — not a black box</li>
+          <li>Schema-driven design: add a new field to the config → extraction covers it on the next run with zero pipeline changes</li>
+          <li>Temporal ordering via <code style="font-family:monospace;font-size:11px;color:#E8643E">retrieved_at</code> means stale data is flagged, not overwritten</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card" style="padding:14px 16px;">
+      <h4>Activation Examples — What Kobie Can Do With This</h4>
+      <table class="activation-table">
+        <thead>
+          <tr>
+            <th>Use Case</th>
+            <th>Field(s) Used</th>
+            <th>Activation Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Benchmark earn rate vs. airline peers</td>
+            <td><code style="font-family:monospace;font-size:10.5px">earn_mechanics.base_earn_rate</code></td>
+            <td>Pull adjudicated values for 5 competitors; generate ranked comparison table with source citations</td>
+          </tr>
+          <tr>
+            <td>Identify partnership whitespace</td>
+            <td><code style="font-family:monospace;font-size:10.5px">partnerships.partners</code></td>
+            <td>Cross-reference partner lists; flag category gaps (e.g. client has no fintech partner while 3 competitors do)</td>
+          </tr>
+          <tr>
+            <td>Sentiment-driven product recommendations</td>
+            <td><code style="font-family:monospace;font-size:10.5px">member_sentiment.common_complaints</code></td>
+            <td>Surface top complaint themes from Reddit/Trustpilot; recommend UX fixes before client redesign</td>
+          </tr>
+          <tr>
+            <td>Detect program rebrands / rule changes</td>
+            <td><code style="font-family:monospace;font-size:10.5px">competitive_position.key_differentiators</code></td>
+            <td>Re-run pipeline monthly; FLAG outcomes highlight changed values for analyst review</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+  <div class="slide-footer">
+    <span class="brand">Kobie Launchpad AI Hackathon</span>
+    <span class="pg">4 / 6</span>
+  </div>
+</div>
+
+
+<!-- ════ SLIDE 6 — LIVE DEMO ════ -->
+<div class="slide s-dark">
+  <div class="slide-header"><h2>Live Demo Highlights</h2></div>
+  <div class="slide-content" style="gap:12px;">
+
+    <div class="demo-step">
+      <h4>1. End-to-End Pipeline Execution</h4>
+      <p>Type any loyalty program name (e.g. <em>"Marriott Bonvoy"</em>) into the Input Verifier tab → the 6-node LangGraph pipeline fires automatically. The Pipeline Inspector tab shows live node-by-node status, query list, scraped URL count, chunk count, and per-field extraction coverage — all in one view.</p>
+    </div>
+
+    <div class="demo-step">
+      <h4>2. Conflict Adjudication in Action</h4>
+      <p>Open the Pipeline Inspector after a run. Expand a HIGH-volatility field (e.g. <code>earn_mechanics.base_earn_rate</code>). Show two contradicting claims from independent sources. Demonstrate auto-resolve (gap &gt; 0.20) vs. a live 5-step adversarial debate — Advocate A → Advocate B → TF-IDF gate → Rebuttal A → Rebuttal B → LLaMA Judge returning a structured JSON verdict with <code>winner · deciding_factor · confidence_adjustment</code>.</p>
+    </div>
+
+    <div class="demo-step">
+      <h4>3. Compare Mode — Two Programs Side by Side</h4>
+      <p>Switch to the Compare tab. Enter two programs (e.g. <em>"Delta SkyMiles"</em> and <em>"United MileagePlus"</em>). Both pipelines run in parallel via ThreadPoolExecutor and render a structured side-by-side field comparison. Point out where adjudicated values differ and which source won each conflict.</p>
+    </div>
+
+    <div class="demo-step">
+      <h4>4. Converse Tab — Field-Level Q&amp;A</h4>
+      <p>Switch to the Converse tab. Ask: <em>"What is the point expiry policy?"</em> or <em>"Which partners are listed?"</em>. Answers are grounded in stored claim evidence — not LLM memory — with source URL attribution on every response.</p>
+    </div>
+
+  </div>
+  <div class="slide-footer">
+    <span class="brand">Kobie Launchpad AI Hackathon</span>
+    <span class="pg">5 / 6</span>
+  </div>
+</div>
+
+
+<!-- ════ SLIDE 7 — LEARNINGS & LIMITATIONS ════ -->
+<div class="slide s-light">
+  <div class="slide-header"><h2>Learnings, Limitations &amp; Next Steps</h2></div>
+  <div class="slide-content" style="gap:12px;">
+
+    <div class="two-col">
+      <div class="card">
+        <h4>🎓 What We Learned</h4>
+        <ul>
+          <li><strong>Source contradiction is the norm</strong> — earn rates and point values conflict across 3+ sources on almost every program we tested</li>
+          <li>The biggest quality lever was <strong>volatility-weighted confidence scoring</strong>, not the extraction LLM itself — weighting recency for earn rates eliminated most false auto-resolves</li>
+          <li>Heading-based chunking dramatically outperformed fixed-window chunking for loyalty T&amp;C pages</li>
+          <li>Query planning with explicit field-difficulty tiers reduced Firecrawl spend ~30% vs. generic queries while improving coverage on hard fields (point values, sentiment, differentiators)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>⚠️ Honest Limitations</h4>
+        <ul>
+          <li>Sentiment fields are sparse for smaller or regional programs — forum coverage is thin</li>
+          <li>No <strong>Temporal Ledger</strong>: <code style="font-family:monospace;font-size:10.5px;color:#E8643E">retrieved_at</code> preserves recency ordering but there is no structured change-history audit trail</li>
+          <li>Brief generation is scaffolded — narrator not yet wired to the adjudicated field report</li>
+          <li>Confidence calibration tuned on a small program set; high-conflict programs with thin evidence may still misfire</li>
+          <li>SEO echo chambers can survive dedup if the same claim propagates across many sites — lineage-based dedup not yet implemented</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <h4>🚀 If We Had More Time…</h4>
+      <ul style="display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;padding-left:16px;">
+        <li style="font-size:12px;color:#444;line-height:1.6"><strong>Wire brief generation</strong> to the adjudicated field report — structured analyst brief with sentence-level entailment check</li>
+        <li style="font-size:12px;color:#444;line-height:1.6"><strong>Temporal Ledger</strong> — append-only SQLite table tracking field value changes with date stamps, enabling "what changed since last month?" queries</li>
+        <li style="font-size:12px;color:#444;line-height:1.6"><strong>Full Converse module</strong> — upgrade from keyword-match QA to Groq-powered RAG over the canonical field report and brief</li>
+        <li style="font-size:12px;color:#444;line-height:1.6"><strong>What-if simulation</strong> — "if Program X lowered their earn rate by 0.5x, how would it compare?" modelled over adjudicated values</li>
+      </ul>
+    </div>
+
+    <div class="contrib-bar">
+      <p>
+        <strong>Shreyas R Gowda</strong> → LangGraph pipeline orchestration, extraction schema design, adjudication + 5-step debate engine &nbsp;|&nbsp;
+        <strong>Shreeram G Patgar</strong> → Tavily retrieval, URL deduplication, Firecrawl integration, priority-sorted URL budgeting &nbsp;|&nbsp;
+        <strong>Naveen G</strong> → Brief generation output layer, Converse module, SQLite persistence, evaluation &amp; sentiment sourcing
+      </p>
+    </div>
+
+  </div>
+  <div class="slide-footer">
+    <span class="brand">Kobie Launchpad AI Hackathon</span>
+    <span class="pg">6 / 6</span>
+  </div>
+</div>
+
+</body>
+</html>
