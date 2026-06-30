@@ -216,14 +216,20 @@ CONTRADICTORY: Only one value can be correct — same context, one must be wrong
 
 FIELD: {field_name}
 VALUE A: {value_a}
+SOURCE SNIPPET A: {snippet_a}
 VALUE B: {value_b}
+SOURCE SNIPPET B: {snippet_b}
+
+MERGED VALUE RULE: If complementary, synthesize ONLY using words and context found in SOURCE SNIPPET A and SOURCE SNIPPET B above.
+Do NOT introduce context not present in the snippets (e.g. do not say "on flights" if neither snippet mentions flights).
+If you cannot synthesize without inventing context, treat as contradictory and set merged_value to null.
 
 Output ONLY valid JSON, no preamble:
 {{
     "conflict_type": "complementary" or "contradictory",
-    "merged_value": "<if complementary: a clear synthesized statement combining both values; if contradictory: null>",
-    "context_a": "<specific context/category/tier where value A applies, or null if general>",
-    "context_b": "<specific context/category/tier where value B applies, or null if general>"
+    "merged_value": "<if complementary: synthesized statement using only snippet content; if contradictory: null>",
+    "context_a": "<specific context/category/tier where value A applies per snippet A, or null if general>",
+    "context_b": "<specific context/category/tier where value B applies per snippet B, or null if general>"
 }}"""
 
 
@@ -406,10 +412,14 @@ async def classify_conflict_type(conflict: dict[str, Any]) -> dict[str, Any]:
     """
     value_a = str(conflict["claim_a"].get("value") or "")
     value_b = str(conflict["claim_b"].get("value") or "")
+    snippet_a = str(conflict["claim_a"].get("source_snippet") or "")
+    snippet_b = str(conflict["claim_b"].get("source_snippet") or "")
     prompt = COMPLEMENTARY_CLASSIFIER_PROMPT.format(
         field_name=conflict["field_name"],
         value_a=value_a,
+        snippet_a=snippet_a or "(no snippet available)",
         value_b=value_b,
+        snippet_b=snippet_b or "(no snippet available)",
     )
     log = logging.getLogger("kobie.debate")
     try:

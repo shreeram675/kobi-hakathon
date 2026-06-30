@@ -2,8 +2,7 @@
 
 import { AlertTriangle, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
-import { ConfidenceBar } from "./ConfidenceBar";
-import { StatusBadge, VolatilityChip } from "./badges";
+import { StatusBadge } from "./badges";
 import { SourcePillRow } from "./SourcePill";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -14,8 +13,6 @@ import {
   type Category,
   fieldLabel,
   isHighVolatility,
-  leafOf,
-  volatilityFor,
 } from "@/lib/schema";
 import { TOKENS } from "@/lib/colors";
 import { cn, renderValue } from "@/lib/format";
@@ -78,11 +75,9 @@ export function SchemaFieldTable({
           {openAll ? "Collapse all" : "Expand all"}
         </button>
       </div>
-      <div className="hidden grid-cols-[minmax(0,1.6fr)_minmax(0,1.6fr)_120px_84px_150px_minmax(0,1.1fr)] gap-3 border-b border-line px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-ink/45 lg:grid">
+      <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,2.2fr)_150px_minmax(0,1.1fr)] gap-3 border-b border-line px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-ink/45 lg:grid">
         <span>Field</span>
         <span>Value</span>
-        <span>Confidence</span>
-        <span>Volatility</span>
         <span>Status</span>
         <span>Sources</span>
       </div>
@@ -155,55 +150,60 @@ function CategoryGroup({
 
 function FieldRow({ row }: { row: Row }) {
   const high = isHighVolatility(row.field_path);
+  const hasMultiple =
+    row.conflict_type &&
+    row.conflict_type !== "contradictory" &&
+    row.all_values &&
+    row.all_values.length > 1;
+
   return (
-    <div className="grid grid-cols-1 gap-2 px-4 py-2.5 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1.6fr)_120px_84px_150px_minmax(0,1.1fr)] lg:items-center lg:gap-3">
+    <div className="grid grid-cols-1 gap-2 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,2.2fr)_150px_minmax(0,1.1fr)] lg:items-start lg:gap-3">
       {/* Field */}
-      <div className="flex items-start gap-1.5">
+      <div className="flex items-start gap-1.5 pt-0.5">
         {high && (
           <AlertTriangle
             className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber"
-            aria-label="High-volatility field"
+            aria-label="May change frequently — verify against live source"
           />
         )}
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-ink">
-            {fieldLabel(row.field_path)}
-          </p>
-          <p className="truncate font-mono text-[10px] text-ink/40">
-            {row.field_path}
-          </p>
-        </div>
+        <p className="text-sm font-medium text-ink leading-snug">
+          {fieldLabel(row.field_path)}
+        </p>
       </div>
       {/* Value */}
       <div className="text-sm text-ink/80">
         {row.value == null ? (
           <span className="text-ink/30">—</span>
-        ) : (
-          <div>
-            <span className="line-clamp-2">{renderValue(row.value)}</span>
-            {row.conflict_type && row.conflict_type !== "contradictory" && row.all_values && row.all_values.length > 1 && (
-              <div className="mt-1 flex flex-wrap gap-1">
-                {row.all_values.map((av, i) => (
-                  <span
-                    key={i}
-                    className="inline-flex items-center gap-1 rounded bg-teal/10 px-1.5 py-0.5 text-[10px] text-teal"
-                    title={av.source_url ?? undefined}
+        ) : hasMultiple ? (
+          <div className="flex flex-col gap-1.5">
+            {row.all_values!.map((av, i) => (
+              <div
+                key={i}
+                className="rounded-md border border-line bg-white px-2.5 py-1.5"
+              >
+                {av.context && (
+                  <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink/40">
+                    {av.context}
+                  </p>
+                )}
+                <p className="text-sm text-ink/80">{av.value}</p>
+                {av.source_url && (
+                  <a
+                    href={av.source_url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    title={av.source_url}
+                    className="mt-0.5 truncate block text-[10px] text-teal hover:underline"
                   >
-                    {av.context ? `${av.context}: ` : ""}{av.value}
-                  </span>
-                ))}
+                    {av.source_url}
+                  </a>
+                )}
               </div>
-            )}
+            ))}
           </div>
+        ) : (
+          <p>{renderValue(row.value)}</p>
         )}
-      </div>
-      {/* Confidence */}
-      <div className="lg:px-0">
-        <ConfidenceBar value={row.confidence} width={70} />
-      </div>
-      {/* Volatility */}
-      <div>
-        <VolatilityChip volatility={volatilityFor(row.field_path)} />
       </div>
       {/* Status */}
       <div>

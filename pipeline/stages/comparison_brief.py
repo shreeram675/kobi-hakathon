@@ -60,7 +60,7 @@ Your task: compare these programs and produce a structured JSON brief. Base EVER
 OUTPUT (strict JSON only — no markdown fences, no commentary):
 {{
   "overall_winner": "<program name that clearly leads, or null if genuinely tied>",
-  "executive_summary": "<5-7 sentences: what this comparison reveals, who leads and why, biggest tension, key data points with source citations like (source: domain.com)>",
+  "executive_summary": "<A full analyst narrative, 400-600 words, written as flowing prose paragraphs (separate paragraphs with \\n\\n) — NOT a bulleted list and NOT a single terse blurb. Write it the way a senior analyst would open a client report: open with the headline finding and who leads overall and why; then walk through the 2-3 categories where the programs differ most sharply, weaving in actual numbers and source citations like (source: domain.com) as you go; then cover where they're evenly matched or where data is too thin to call; close with a short takeaway on which traveller/consumer profile each program suits best. Cite real data points throughout — this should read like something a person wrote after studying the data, not a list of facts.>",
   "category_verdicts": [
     {{
       "category": "<category key from list below>",
@@ -91,22 +91,15 @@ OUTPUT (strict JSON only — no markdown fences, no commentary):
       "advantages": ["<2-4 concise bullet strings — each a distinct strategic strength of this program, grounded in extracted data>"],
       "gaps": ["<2-4 concise bullet strings — each a distinct weakness, data gap, or area where this program trails competitors>"]
     }}
-  ],
-  "differentiation_themes": [
-    {{
-      "theme": "<short theme name, e.g. 'Earn Rate Structure', 'Tier Accessibility', 'Redemption Flexibility'>",
-      "summary": "<2-3 sentences comparing how the programs differ on this theme, citing specific values and source URLs>",
-      "leader": "<program name that leads on this theme, or null if genuinely tied or mixed>"
-    }}
   ]
 }}
 
 RULES:
+- executive_summary is the centerpiece of this brief — write it as genuine analyst prose (multiple paragraphs, no bullet points), not a compressed list of facts
 - category_verdicts must cover all 8 categories in this order: {category_keys}
 - key_differentiators: pick the 3-5 most impactful differences only
 - personas: one entry per program
 - strategic_profiles: one entry per program; advantages and gaps must be grounded in extracted data, not invented
-- differentiation_themes: pick 3-5 themes that most sharply separate the programs; each theme's leader must be one of the program names or null
 - If a category has no data for any program, set winner to "Insufficient data" and insight to "No data extracted."
 - overall_winner must be null if the margin is not meaningful or data is sparse
 - ALWAYS cite actual source URLs in insights — use the URLs provided in the data blocks above
@@ -117,7 +110,7 @@ RULES:
 - Fields marked "[range across sources]" list values from multiple sources that may apply to different categories — describe the full range in your insight
 - Fields marked "[combined from multiple sources]" are union-merged lists — treat the merged value as the complete picture
 - source_urls arrays must contain the full URLs (https://...), not just domains
-- Target total brief length: 500-1000 words across all fields combined
+- Target total brief length: 700-1200 words across all fields combined
 - Output ONLY the JSON object. No preamble.\
 """
 
@@ -186,6 +179,22 @@ def _build_program_block(name: str, field_report: FieldReport) -> str:
     return "\n".join(parts)
 
 
+def _collect_known_urls(field_reports: list[FieldReport]) -> set[str]:
+    """Collect all source URLs that actually appear in the provided field reports."""
+    known: set[str] = set()
+    for fr in field_reports:
+        for entry in fr.entries:
+            for url in (entry.source_urls or []):
+                if url:
+                    known.add(url)
+    return known
+
+
+def _filter_invented_urls(urls: list[str], known: set[str]) -> list[str]:
+    """Drop any URL the LLM generated that wasn't in the provided data."""
+    return [u for u in urls if u in known]
+
+
 def generate_comparison_brief(
     run_id: str,
     programs: list[str],
@@ -201,19 +210,21 @@ def generate_comparison_brief(
         category_keys=", ".join(_SECTION_ORDER),
     )
 
+    known_urls = _collect_known_urls(field_reports)
     raw = _call_gemini(prompt)
     data = _parse_json(raw)
-    return _build_brief(run_id, programs, data)
+    return _build_brief(run_id, programs, data, known_urls=known_urls)
 
 
-def _build_brief(run_id: str, programs: list[str], data: dict[str, Any]) -> ComparisonBrief:
+def _build_brief(run_id: str, programs: list[str], data: dict[str, Any], *, known_urls: set[str] | None = None) -> ComparisonBrief:
+    _known = known_urls or set()
     category_verdicts = [
         CategoryVerdict(
             category=v.get("category", ""),
             label=v.get("label", ""),
             winner=v.get("winner", "Insufficient data"),
             insight=v.get("insight", ""),
-            source_urls=v.get("source_urls") or [],
+            source_urls=_filter_invented_urls(v.get("source_urls") or [], _known) if _known else (v.get("source_urls") or []),
         )
         for v in (data.get("category_verdicts") or [])
     ]
@@ -222,7 +233,7 @@ def _build_brief(run_id: str, programs: list[str], data: dict[str, Any]) -> Comp
             topic=d.get("topic", ""),
             insight=d.get("insight", ""),
             advantage=d.get("advantage", ""),
-            source_urls=d.get("source_urls") or [],
+            source_urls=_filter_invented_urls(d.get("source_urls") or [], _known) if _known else (d.get("source_urls") or []),
             rejected_note=d.get("rejected_note") or None,
         )
         for d in (data.get("key_differentiators") or [])

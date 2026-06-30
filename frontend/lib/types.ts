@@ -461,6 +461,11 @@ export interface AgentState {
   comparison_run?: ComparisonRunInfo | null;
   /** Live API cost ledger for the run. */
   cost_report?: CostReport | null;
+  /** Run-wide start/end timestamps. In compare mode these reflect the
+   *  whole run (all programs), unlike created_at/updated_at which may
+   *  reflect a single program's own timing. */
+  run_started_at?: string | null;
+  run_finished_at?: string | null;
 }
 
 // ---- Multi-program comparison run tracking ----

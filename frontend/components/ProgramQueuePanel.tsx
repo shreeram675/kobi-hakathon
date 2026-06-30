@@ -10,6 +10,8 @@ interface ProgramQueuePanelProps {
   /** Current stage_status from the polled run (for the in-progress program). */
   currentStageStatus: Record<string, StageStatus>;
   overallStatus: "running" | "done" | "error" | "clarification_needed" | "cache_hit_pending" | "cancelled";
+  selectedIdx?: number;
+  onSelect?: (idx: number) => void;
 }
 
 const STATUS_CONFIG: Record<
@@ -42,14 +44,6 @@ const STATUS_CONFIG: Record<
   },
 };
 
-const PROGRAM_ACCENT = ["text-teal", "text-blue", "text-navy", "text-green", "text-amber"];
-const PROGRAM_BG = [
-  "bg-teal/10 border-teal/20",
-  "bg-blue/10 border-blue/20",
-  "bg-navy/10 border-navy/20",
-  "bg-green/10 border-green/20",
-  "bg-amber/10 border-amber/20",
-];
 
 function MiniStageBar({
   stageStatus,
@@ -82,6 +76,8 @@ export function ProgramQueuePanel({
   info,
   currentStageStatus,
   overallStatus,
+  selectedIdx,
+  onSelect,
 }: ProgramQueuePanelProps) {
   const { programs, current_program_index, total_programs, program_statuses, program_stage_statuses } =
     info;
@@ -141,8 +137,6 @@ export function ProgramQueuePanel({
         {programs.map((prog, idx) => {
           const status: ProgramStatus = (program_statuses[idx] as ProgramStatus) ?? "pending";
           const cfg = STATUS_CONFIG[status];
-          const accent = PROGRAM_ACCENT[idx % PROGRAM_ACCENT.length];
-          const bg = PROGRAM_BG[idx % PROGRAM_BG.length];
           const isActive = status === "running";
           const stageStatusForProg =
             isActive ? currentStageStatus : (program_stage_statuses[idx] ?? {});
@@ -151,12 +145,22 @@ export function ProgramQueuePanel({
             (s) => stageStatusForProg[s.id] === "running"
           )?.short;
 
+          const isSelected = selectedIdx === idx;
+          const isClickable = onSelect && (status === "done" || isActive);
+
           return (
             <div
               key={idx}
+              role={isClickable ? "button" : undefined}
+              tabIndex={isClickable ? 0 : undefined}
+              onClick={isClickable ? () => onSelect(idx) : undefined}
+              onKeyDown={isClickable ? (e) => { if (e.key === "Enter" || e.key === " ") onSelect(idx); } : undefined}
               className={cn(
                 "px-4 py-3 transition-colors duration-300",
-                isActive && "bg-[#f0fafa]/60",
+                isActive && !isSelected && "bg-[#f0fafa]/60",
+                isSelected && "bg-teal/5 border-l-2 border-l-teal",
+                isClickable && !isSelected && "cursor-pointer hover:bg-soft-grey/40",
+                isClickable && "select-none",
               )}
             >
               <div className="flex items-start gap-3">
@@ -164,7 +168,13 @@ export function ProgramQueuePanel({
                 <span
                   className={cn(
                     "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold",
-                    bg, accent,
+                    isSelected
+                      ? "bg-teal/20 border-teal/40 text-teal"
+                      : isActive
+                        ? "bg-teal/15 border-teal/25 text-teal"
+                        : status === "done"
+                          ? "bg-green/15 border-green/25 text-green"
+                          : "bg-ink/6 border-ink/15 text-ink/35",
                   )}
                 >
                   {String.fromCharCode(65 + idx)}

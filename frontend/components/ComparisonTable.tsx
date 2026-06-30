@@ -43,7 +43,7 @@ export function ComparisonTable({
     <div className="overflow-hidden rounded-card border border-line bg-white shadow-panel">
       <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1.4fr)_minmax(0,1.4fr)] gap-3 border-b border-line bg-navy px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-white/80">
         <span>Field</span>
-        <span className="truncate text-teal-100">{comparison.program_a}</span>
+        <span className="truncate">{comparison.program_a}</span>
         <span className="truncate">{comparison.program_b}</span>
       </div>
       <div className="divide-y divide-line">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { BadgeCheck, FileText, Quote } from "lucide-react";
+import { BadgeCheck, ExternalLink, FileText, Quote } from "lucide-react";
 import { StageSection } from "./StageSection";
 import { StatRow } from "./StatRow";
 import { MetricCard } from "./MetricCard";
@@ -14,7 +14,6 @@ import { ConflictGrid } from "./ConflictCard";
 import { DebateTimeline } from "./DebateTimeline";
 import { HumanReviewQueue } from "./HumanReviewQueue";
 import { SourcePill, SourcePillRow } from "./SourcePill";
-import { CoverageRing } from "./charts/CoverageRing";
 import { DataQualityGauge } from "./charts/DataQualityGauge";
 import { Donut } from "./charts/Donut";
 import { SourceTypePie } from "./charts/SourceTypePie";
@@ -236,13 +235,25 @@ export function StageDetailPanel({
                         {b.is_fallback && (
                           <Badge tone="amber">fallback</Badge>
                         )}
-                        <span className="min-w-0 flex-1 truncate text-ink/70">
-                          {truncate(b.title ?? b.url, 42)}
+                        <span className="min-w-0 flex-1 truncate text-ink/70" title={b.url}>
+                          {b.title ? truncate(b.title, 38) : truncate(b.url, 38)}
                         </span>
                         {isFailed && b.error && (
-                          <span className="shrink-0 max-w-[140px] truncate text-[10px] text-red/80" title={b.error}>
+                          <span className="shrink-0 max-w-[120px] truncate text-[10px] text-red/80" title={b.error}>
                             {b.error}
                           </span>
+                        )}
+                        {b.url && (
+                          <a
+                            href={b.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={b.url}
+                            className="shrink-0 text-ink/35 hover:text-teal transition-colors"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
                         )}
                       </div>
                     );
@@ -294,9 +305,9 @@ export function StageDetailPanel({
                 columns={2}
                 items={[
                   { label: "Extracted", value: state.field_report.extracted_count, tone: "green" },
-                  { label: "Ambiguous", value: state.field_report.ambiguous_count, tone: "amber" },
+                  { label: "Unclear", value: state.field_report.ambiguous_count, tone: "amber" },
                   { label: "Not found", value: state.field_report.not_found_count, tone: "red" },
-                  { label: "Flagged", value: state.field_report.flagged_count, tone: "blue" },
+                  { label: "Needs review", value: state.field_report.flagged_count, tone: "blue" },
                 ]}
               />
             </div>
@@ -378,27 +389,14 @@ export function OutputSection({ state }: { state: AgentState }) {
   const c = state.schema_coverage;
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-4 items-center">
-        <div className="shrink-0"><CoverageRing coverage={c} size={160} /></div>
-        <div className="shrink-0"><DataQualityGauge value={state.data_quality} label="Data quality" size={160} /></div>
-        <div className="min-w-[240px] flex-1">
-          <StatRow
-            columns={2}
-            items={[
-              { label: "Total fields", value: c.total_fields, tone: "navy" },
-              { label: "Supported", value: c.supported_fields, tone: "green" },
-              { label: "Manual review", value: c.manual_review_fields, tone: "red" },
-              { label: "Rejected", value: c.rejected_fields, tone: "amber" },
-              { label: "Null / N/A", value: c.null_fields, tone: "grey" },
-              {
-                label: "Cited claims",
-                value: state.final_brief?.cited_claim_ids.length ?? 0,
-                tone: "blue",
-              },
-            ]}
-          />
-        </div>
-      </div>
+      <StatRow
+        items={[
+          { label: "Supported", value: c.supported_fields, tone: "green" },
+          { label: "Manual review", value: c.manual_review_fields, tone: "red" },
+          { label: "Rejected", value: c.rejected_fields, tone: "amber" },
+          { label: "Null / N/A", value: c.null_fields, tone: "grey" },
+        ]}
+      />
 
       {state.final_brief && (() => {
         const extractedEntries = (state.field_report?.entries ?? []).filter(
@@ -439,10 +437,14 @@ export function OutputSection({ state }: { state: AgentState }) {
             <div className="flex flex-wrap items-center gap-2 border-t border-line bg-soft-grey/30 px-4 py-2 text-xs text-ink/55">
               <Quote className="h-3.5 w-3.5" />
               <span className="stat-num">{state.final_brief.word_count} words</span>
-              <span>·</span>
-              <span className="stat-num">
-                {(state.final_brief.cited_claim_ids ?? []).length} cited claims
-              </span>
+              {(state.final_brief.cited_claim_ids ?? []).length > 0 && (
+                <>
+                  <span>·</span>
+                  <span className="stat-num">
+                    {(state.final_brief.cited_claim_ids ?? []).length} cited claims
+                  </span>
+                </>
+              )}
             </div>
           </div>
         );

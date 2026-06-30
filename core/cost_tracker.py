@@ -88,27 +88,43 @@ class CostLedger:
             ln.calls += pages
             ln.usd_cost += cost
 
-    def to_dict(self) -> dict[str, Any]:
+    def snapshot(self) -> dict[str, LedgerLine]:
+        """Return a point-in-time copy of the current per-line totals.
+
+        Pass the result to to_dict(since=...) to compute only the cost
+        accrued after the snapshot was taken (e.g. for one program's
+        share of a shared run-wide ledger in compare mode).
+        """
         with self._lock:
-            lines = sorted(
-                [
-                    {
-                        "provider": ln.provider,
-                        "stage": ln.stage,
-                        "calls": ln.calls,
-                        "prompt_tokens": ln.prompt_tokens,
-                        "completion_tokens": ln.completion_tokens,
-                        "total_tokens": ln.prompt_tokens + ln.completion_tokens,
-                        "usd_cost": round(ln.usd_cost, 6),
-                    }
-                    for ln in self._lines.values()
-                ],
-                key=lambda r: (r["provider"], r["stage"]),
-            )
-            total_cost = sum(ln.usd_cost for ln in self._lines.values())
-            total_calls = sum(ln.calls for ln in self._lines.values())
-            total_prompt = sum(ln.prompt_tokens for ln in self._lines.values())
-            total_completion = sum(ln.completion_tokens for ln in self._lines.values())
+            return {k: LedgerLine(**vars(ln)) for k, ln in self._lines.items()}
+
+    def to_dict(self, since: dict[str, "LedgerLine"] | None = None) -> dict[str, Any]:
+        baseline = since or {}
+        with self._lock:
+            lines = []
+            for key, ln in self._lines.items():
+                base = baseline.get(key)
+                calls = ln.calls - (base.calls if base else 0)
+                prompt_tokens = ln.prompt_tokens - (base.prompt_tokens if base else 0)
+                completion_tokens = ln.completion_tokens - (base.completion_tokens if base else 0)
+                usd_cost = ln.usd_cost - (base.usd_cost if base else 0.0)
+                if calls <= 0 and usd_cost <= 0 and prompt_tokens <= 0 and completion_tokens <= 0:
+                    continue
+                lines.append({
+                    "provider": ln.provider,
+                    "stage": ln.stage,
+                    "calls": calls,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens,
+                    "usd_cost": round(usd_cost, 6),
+                })
+            lines.sort(key=lambda r: (r["provider"], r["stage"]))
+
+            total_cost = sum(r["usd_cost"] for r in lines)
+            total_calls = sum(r["calls"] for r in lines)
+            total_prompt = sum(r["prompt_tokens"] for r in lines)
+            total_completion = sum(r["completion_tokens"] for r in lines)
 
         return {
             "lines": lines,

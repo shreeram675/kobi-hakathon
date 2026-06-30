@@ -113,6 +113,13 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
     return () => clearInterval(t);
   }, [state?.status]);
 
+  // Auto-follow the currently running program in comparison mode
+  useEffect(() => {
+    if (!state?.comparison_run) return;
+    const activeIdx = state.comparison_run.program_statuses.findIndex((s) => s === "running");
+    if (activeIdx !== -1) setSelectedProgramIdx(activeIdx);
+  }, [state?.comparison_run?.current_program_index]);
+
   if (isLoading) {
     return (
       <Shell>
@@ -151,15 +158,30 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
     compRun?.programs[currentProgramIdx] ?? state.program_name ?? null;
   const resolvedProgramName = state.program_name ?? currentProgramName;
 
+  // In comparison mode, time/cost should reflect whichever program is
+  // currently selected rather than always the overall run's state.
+  const selectedDoneState: AgentState | null =
+    isComparison && compRun && state.status === "done"
+      ? (compRun.program_states[selectedProgramIdx] as AgentState | null) ?? null
+      : null;
+  const displayState = selectedDoneState ?? state;
+
   return (
     <div className="flex h-screen flex-col bg-canvas">
       <Topbar>
         {isComparison && state.status === "done" && (
-          <Link href={`/run/${runId}/compare`}>
-            <Button size="sm" variant="secondary">
-              <GitCompareArrows className="h-4 w-4" /> View comparison
-            </Button>
-          </Link>
+          <>
+            <DownloadPDFButton state={state} variant="compare" />
+            <Link href={`/run/${runId}/compare`}>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="bg-kobie-orange text-white shadow-sm hover:bg-kobie-orange/90"
+              >
+                <GitCompareArrows className="h-4 w-4" /> View comparison
+              </Button>
+            </Link>
+          </>
         )}
         {!isComparison && state.status === "done" && (
           <DownloadPDFButton state={state} variant="single" />
@@ -220,68 +242,107 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
           className="flex min-h-0 flex-col border-b border-line bg-white lg:border-b-0 flex-shrink-0"
           style={isDesktop ? { width: `${leftPct}%` } : undefined}
         >
-          <StatusBar state={state} doneCount={doneCount} pct={pct} />
+          <StatusBar state={state} displayState={displayState} doneCount={doneCount} pct={pct} />
 
           {/* progress track */}
           <div className="progress-track mx-4 my-0 rounded-none" style={{ height: 2 }}>
             <div className="progress-fill" style={{ width: `${pct}%` }} />
           </div>
 
-          {/* In compare mode: show both programs' pipelines stacked */}
+          {/* In compare mode: compact program list + single pipeline view */}
           {isComparison && compRun && compRun.total_programs >= 2 ? (
-            <div className="flex min-h-0 flex-1 flex-col divide-y divide-line overflow-y-auto scroll-thin">
-              {compRun.programs.map((prog, idx) => {
-                const progStatus = compRun.program_statuses[idx] as "pending" | "running" | "done" | "error";
-                const isActive = progStatus === "running";
-                const isDone = progStatus === "done";
-                const progState = compRun.program_states[idx] as AgentState | null;
-                const effectiveState = isActive ? state : progState;
-                const isSelected = state.status === "done" && idx === selectedProgramIdx;
-                const isClickable = isDone && state.status === "done";
+            <div className="flex min-h-0 flex-1">
+              {/* Compact program list */}
+              <div className="flex w-[140px] shrink-0 flex-col divide-y divide-line border-r border-line bg-soft-grey/30 overflow-y-auto scroll-thin">
+                {compRun.programs.map((prog, idx) => {
+                  const progStatus = compRun.program_statuses[idx] as "pending" | "running" | "done" | "error";
+                  const isActive = progStatus === "running";
+                  const isDone = progStatus === "done";
+                  const progState = compRun.program_states[idx] as AgentState | null;
+                  const isSelected = idx === selectedProgramIdx;
+                  const doneStages = isDone
+                    ? STAGE_IDS.filter((id) => progState?.stage_status?.[id] === "done").length
+                    : isActive
+                    ? STAGE_IDS.filter((id) => state.stage_status?.[id] === "done").length
+                    : 0;
+                  const stagePct = Math.round((doneStages / STAGE_IDS.length) * 100);
 
-                return (
-                  <div
-                    key={idx}
-                    className={cn(
-                      "relative flex-1 min-h-[280px] transition-colors duration-200",
-                      isActive && "bg-[#f8fdfd]",
-                      isSelected && "ring-2 ring-inset ring-teal/30",
-                      isClickable && !isSelected && "cursor-pointer hover:bg-soft-grey/20",
-                    )}
-                    onClick={isClickable ? () => { setSelectedProgramIdx(idx); setFocused(null); } : undefined}
-                  >
-                    {/* Program label banner */}
-                    <div className={cn(
-                      "flex items-center gap-2 px-3 py-1.5 border-b border-line/50 text-[10px] font-semibold",
-                      isSelected ? "bg-teal/10 text-teal" : isActive ? "bg-teal/8 text-teal" : isDone ? "bg-green/8 text-green" : "bg-soft-grey/50 text-ink/40"
-                    )}>
-                      <span className={cn(
-                        "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold border",
-                        isSelected ? "bg-teal/30 border-teal/50 text-teal" : isActive ? "bg-teal/20 border-teal/30 text-teal" : isDone ? "bg-green/20 border-green/30 text-green" : "bg-ink/8 border-ink/15 text-ink/40"
-                      )}>
-                        {String.fromCharCode(65 + idx)}
-                      </span>
-                      <span className="truncate max-w-[160px]">{prog}</span>
-                      {isActive && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
-                      {isDone && !isSelected && <Check className="h-3 w-3 ml-auto" />}
-                      {isSelected && <span className="ml-auto text-[9px] font-semibold bg-teal/15 text-teal px-1.5 py-0.5 rounded">Viewing</span>}
-                      {progStatus === "pending" && <span className="ml-auto text-ink/30">Waiting…</span>}
-                    </div>
-
-                    {effectiveState ? (
-                      <PipelineGraph
-                        state={effectiveState}
-                        focused={isSelected ? focused : null}
-                        onFocus={isSelected ? setFocused : () => { setSelectedProgramIdx(idx); setFocused(null); }}
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-[11px] text-ink/25 py-10">
-                        {progStatus === "pending" ? "Queued — will start after previous program completes" : "No data"}
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => { setSelectedProgramIdx(idx); setFocused(null); }}
+                      className={cn(
+                        "flex flex-col gap-1.5 px-3 py-3 text-left transition-colors duration-150",
+                        isSelected ? "bg-white border-l-2 border-l-teal" : "hover:bg-white/60",
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={cn(
+                          "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold border",
+                          isSelected ? "bg-teal/20 border-teal/40 text-teal"
+                            : isActive ? "bg-teal/15 border-teal/25 text-teal"
+                            : isDone ? "bg-green/15 border-green/25 text-green"
+                            : "bg-ink/6 border-ink/12 text-ink/35"
+                        )}>
+                          {String.fromCharCode(65 + idx)}
+                        </span>
+                        <span className={cn(
+                          "text-[10px] font-semibold leading-tight line-clamp-2 flex-1 min-w-0",
+                          isSelected ? "text-navy" : isActive ? "text-teal" : isDone ? "text-ink/70" : "text-ink/35"
+                        )}>
+                          {prog}
+                        </span>
                       </div>
-                    )}
-                  </div>
-                );
-              })}
+                      {/* Progress bar */}
+                      <div className="h-1 w-full overflow-hidden rounded-full bg-line">
+                        <div
+                          className={cn(
+                            "h-full rounded-full transition-all duration-500",
+                            isDone ? "bg-green" : isActive ? "bg-teal animate-pulse" : "bg-ink/15"
+                          )}
+                          style={{ width: `${stagePct}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        {isActive && <Loader2 className="h-2.5 w-2.5 text-teal animate-spin" />}
+                        {isDone && <Check className="h-2.5 w-2.5 text-green" />}
+                        {progStatus === "pending" && <span className="text-[9px] text-ink/30">Queued</span>}
+                        {progStatus === "error" && <span className="text-[9px] text-red">Error</span>}
+                        <span className={cn(
+                          "ml-auto text-[9px] tabular-nums font-medium",
+                          isDone ? "text-green" : isActive ? "text-teal" : "text-ink/30"
+                        )}>
+                          {stagePct}%
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Pipeline view for selected program */}
+              <div className="relative flex-1 min-h-0">
+                {(() => {
+                  const selStatus = compRun.program_statuses[selectedProgramIdx] as "pending" | "running" | "done" | "error";
+                  const selState = selStatus === "running"
+                    ? state
+                    : (compRun.program_states[selectedProgramIdx] as AgentState | null);
+                  if (selState) {
+                    return (
+                      <PipelineGraph
+                        state={selState}
+                        focused={focused}
+                        onFocus={setFocused}
+                      />
+                    );
+                  }
+                  return (
+                    <div className="flex h-full items-center justify-center text-[11px] text-ink/25 p-6 text-center">
+                      {selStatus === "pending" ? "Queued — will start after the previous program completes" : "No data"}
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
           ) : (
             <div className="relative min-h-[300px] flex-1 lg:min-h-[400px]">
@@ -315,6 +376,8 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
                 info={compRun}
                 currentStageStatus={state.stage_status ?? {}}
                 overallStatus={state.status}
+                selectedIdx={selectedProgramIdx}
+                onSelect={(idx) => { setSelectedProgramIdx(idx); setFocused(null); }}
               />
             )}
 
@@ -375,16 +438,6 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
                 />
               )}
 
-            {/* ── Program switcher (comparison + done) ── */}
-            {isComparison && compRun && state.status === "done" && (
-              <ProgramSwitcher
-                programs={compRun.programs}
-                programStatuses={compRun.program_statuses as string[]}
-                selectedIdx={selectedProgramIdx}
-                onSelect={(idx) => { setSelectedProgramIdx(idx); setFocused(null); }}
-              />
-            )}
-
             {/* ── Single-program intelligence brief ── */}
             {!isComparison && state.status === "done" && state.final_brief && (
               <SingleProgramBriefPanel
@@ -394,11 +447,7 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
             )}
 
             <StageDetailPanel
-              state={
-                isComparison && compRun && state.status === "done"
-                  ? (compRun.program_states[selectedProgramIdx] as AgentState ?? state)
-                  : state
-              }
+              state={displayState}
               focusedStage={focused}
             />
 
@@ -429,8 +478,15 @@ export default function RunPage({ params }: { params: { run_id: string } }) {
               />
             )}
 
-            {state.cost_report && state.cost_report.lines.length > 0 && (
-              <CostPanel report={state.cost_report} />
+            {isComparison && compRun && state.cost_report && state.cost_report.lines.length > 0 && (
+              <CostPanel report={state.cost_report} label="Total — API Cost Report (all programs)" />
+            )}
+
+            {displayState.cost_report && displayState.cost_report.lines.length > 0 && (
+              <CostPanel
+                report={displayState.cost_report}
+                label={isComparison && compRun ? `${displayState.program_name ?? "This program"} — API Cost Report` : undefined}
+              />
             )}
           </div>
         </div>
@@ -567,10 +623,12 @@ function ComparisonCompleteCTA({
 
 function StatusBar({
   state,
+  displayState,
   doneCount,
   pct,
 }: {
   state: AgentState;
+  displayState: AgentState;
   doneCount: number;
   pct: number;
 }) {
@@ -578,6 +636,7 @@ function StatusBar({
   const isDone = state.status === "done";
   const isCancelled = state.status === "cancelled";
   const compRun = state.comparison_run;
+  const isComparison = !!compRun;
 
   const progressLabel =
     compRun
@@ -598,12 +657,23 @@ function StatusBar({
         {MODE_LABEL[state.mode]}
       </Badge>
 
-      <span className="inline-flex items-center gap-1 text-[11px] text-ink/45">
+      <span className="inline-flex items-center gap-1 text-[11px] text-ink/45" title={isComparison ? "Time for the program currently being viewed" : undefined}>
         <Clock className="h-3 w-3" />
         <span className="stat-num tabular-nums">
-          {elapsed(state.created_at, (isDone || isCancelled) ? state.updated_at : undefined)}
+          {elapsed(displayState.created_at, (isDone || isCancelled) ? displayState.updated_at : undefined)}
         </span>
+        {isComparison && <span className="text-ink/30">viewed</span>}
       </span>
+
+      {isComparison && (isDone || isCancelled) && (
+        <span className="inline-flex items-center gap-1 text-[11px] text-ink/45" title="Total time across all programs">
+          <Clock className="h-3 w-3" />
+          <span className="stat-num tabular-nums">
+            {elapsed(state.run_started_at ?? state.created_at, state.run_finished_at ?? state.updated_at)}
+          </span>
+          <span className="text-ink/30">total</span>
+        </span>
+      )}
 
       <div className="ml-auto flex items-center gap-2">
         {state.errors.length > 0 && !isCancelled && (
@@ -645,7 +715,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   firecrawl: "bg-green/10 text-green",
 };
 
-function CostPanel({ report }: { report: CostReport }) {
+function CostPanel({ report, label }: { report: CostReport; label?: string }) {
   const fmtTokens = (n: number) =>
     n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
   const fmtUsd = (n: number) =>
@@ -655,7 +725,7 @@ function CostPanel({ report }: { report: CostReport }) {
     <section className="scroll-mt-4">
       <h2 className="mb-2.5 flex items-center gap-2 text-[13px] font-semibold text-navy">
         <DollarSign className="h-3.5 w-3.5 text-green" />
-        API Cost Report
+        {label ?? "API Cost Report"}
         <span className="ml-auto font-mono text-[12px] font-semibold text-green">
           {report.total_usd_cost < 0.001
             ? "<$0.001"

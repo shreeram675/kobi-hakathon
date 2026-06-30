@@ -139,6 +139,12 @@ class RunRecord:
         self.cache_decision: str | None = None  # "use_cache" | "fresh"
         self.pending_cache_snapshot: dict | None = None
         self.stop_event = threading.Event()
+        self._program_cost_baseline: dict[str, Any] | None = None
+        # Wall-clock bounds of the whole run, independent of record.state
+        # (which gets overwritten with a single program's own timing in
+        # compare mode — see run_pipeline's `record.state = dict(state_a)`).
+        self.run_started_at: str = now_iso()
+        self.run_finished_at: str | None = None
 
         # Multi-program comparison support
         if mode == "compare":
@@ -204,6 +210,10 @@ def build_run_response(record: RunRecord) -> dict[str, Any]:
             }
         result["conversation"] = list(record.conversation)
         result["cost_report"] = record.cost_ledger.to_dict()
+        # Run-wide totals, distinct from record.state's created_at/updated_at
+        # which (in compare mode) reflect a single program's own timing.
+        result["run_started_at"] = record.run_started_at
+        result["run_finished_at"] = record.run_finished_at
         result["comparison_conversation"] = list(record.comparison_conversation)
         if record.compare_b is not None:
             result["compare_b"] = record.compare_b
@@ -787,6 +797,9 @@ def _reset_record_for_program(record: RunRecord, prog: str, index: int) -> None:
         record.state = fresh
         record.stage_status = {s: "idle" for s in UI_STAGES}
         record.active_stage = None
+        # Snapshot the shared cost ledger so this program's report only
+        # reflects calls made while it was running, not earlier programs'.
+        record._program_cost_baseline = record.cost_ledger.snapshot()
 
 
 def _save_program_result(record: RunRecord, index: int, success: bool,
@@ -800,7 +813,7 @@ def _save_program_result(record: RunRecord, index: int, success: bool,
         serialized["stage_status"] = dict(record.stage_status)
         serialized["active_stage"] = None
         serialized["status"] = "done" if success else "error"
-        serialized["cost_report"] = record.cost_ledger.to_dict()
+        serialized["cost_report"] = record.cost_ledger.to_dict(since=record._program_cost_baseline)
         record.program_states[index] = serialized
         record.program_statuses[index] = "done" if success else "error"
 
@@ -900,6 +913,7 @@ def run_pipeline(record: RunRecord) -> None:
             if not _stopped(record):
                 record.run_status = "done" if any_success else "error"
             # else: run_status is already "cancelled" — preserve it
+            record.run_finished_at = now_iso()
         _persist_run_summary(record)
 
     else:
@@ -911,6 +925,7 @@ def run_pipeline(record: RunRecord) -> None:
                     if record.stage_status[s] == "running":
                         record.stage_status[s] = "error"
                 record.active_stage = None
+                record.run_finished_at = now_iso()
             return  # run_status already "cancelled"
 
         if success:
@@ -941,6 +956,7 @@ def run_pipeline(record: RunRecord) -> None:
 
         with record.lock:
             record.run_status = "done" if success else "error"
+            record.run_finished_at = now_iso()
         _persist_run_summary(record)
 
 
@@ -1671,6 +1687,7 @@ def _run_mock_pipeline(record: RunRecord) -> None:
                 ]
         with record.lock:
             record.run_status = "done"
+            record.run_finished_at = now_iso()
         return
 
     # Single program mock
@@ -1696,6 +1713,7 @@ def _run_mock_pipeline(record: RunRecord) -> None:
             }
         ]
         record.run_status = "done"
+        record.run_finished_at = now_iso()
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -1900,9 +1918,24 @@ def clarify(run_id: str, body: ClarifyRequest) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail="run is not waiting for clarification")
         messages: list[dict[str, str]] = list(record.state.get("validation_messages") or [])
         vr = record.state.get("validation_result")
-        if vr is not None:
-            messages.append({"role": "assistant", "content": json.dumps(vr.model_dump())})
-        messages.append({"role": "user", "content": body.answer.strip()})
+        answer = body.answer.strip()
+        if vr is not None and vr.possible_matches:
+            # If the user's answer shares no words with any possible_match, treat as a fresh query
+            # rather than a contextual reply — the user pivoted to a different program entirely.
+            import re as _re
+            match_words: set[str] = set()
+            for m in vr.possible_matches:
+                match_words.update(_re.findall(r"[a-z0-9]{3,}", (m.program_name + " " + m.brand).lower()))
+            answer_words = set(_re.findall(r"[a-z0-9]{3,}", answer.lower()))
+            if not (answer_words & match_words):
+                messages = [{"role": "user", "content": answer}]
+            else:
+                messages.append({"role": "assistant", "content": json.dumps(vr.model_dump())})
+                messages.append({"role": "user", "content": answer})
+        else:
+            if vr is not None:
+                messages.append({"role": "assistant", "content": json.dumps(vr.model_dump())})
+            messages.append({"role": "user", "content": answer})
         record.state["validation_messages"] = messages
 
     record.clarification_event.set()

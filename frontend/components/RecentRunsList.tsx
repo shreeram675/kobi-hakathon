@@ -113,11 +113,10 @@ export function RecentRunsList() {
         </div>
       ) : (
         <div className="divide-y divide-line">
-          <div className="hidden grid-cols-[1fr_auto_auto_auto] items-center gap-4 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-ink/35 sm:grid">
+          <div className="hidden grid-cols-[1fr_auto_auto] items-center gap-3 pl-4 pr-20 py-2 text-[10px] font-semibold uppercase tracking-wide text-ink/35 sm:grid">
             <span>Program / Input</span>
-            <span>Mode</span>
-            <span>Quality</span>
-            <span />
+            <span className="w-[68px] text-center">Mode</span>
+            <span className="w-[68px] text-center">Quality</span>
           </div>
           <ul className="divide-y divide-line">
             {runs.map((run) => {
@@ -158,14 +157,14 @@ export function RecentRunsList() {
 
                     <Badge
                       tone={MODE_TONE[run.mode] ?? "teal"}
-                      className="hidden shrink-0 capitalize sm:inline-flex text-[10px]"
+                      className="hidden w-[68px] justify-center shrink-0 capitalize sm:inline-flex text-[10px]"
                     >
                       {run.mode}
                     </Badge>
 
                     {run.status === "done" ? (
                       <span
-                        className={`hidden sm:inline-flex items-center gap-1 shrink-0 rounded-pill px-2.5 py-1 text-[11px] font-semibold ${
+                        className={`hidden sm:inline-flex items-center justify-center gap-1 w-[68px] shrink-0 rounded-pill px-2.5 py-1 text-[11px] font-semibold ${
                           run.data_quality >= 0.7
                             ? "bg-soft-green text-green"
                             : run.data_quality >= 0.4
@@ -177,15 +176,15 @@ export function RecentRunsList() {
                         {pct(run.data_quality)}
                       </span>
                     ) : run.status === "cancelled" ? (
-                      <Badge tone="amber" dot className="hidden shrink-0 sm:inline-flex text-[10px]">
+                      <Badge tone="amber" dot className="hidden w-[68px] justify-center shrink-0 sm:inline-flex text-[10px]">
                         stopped
                       </Badge>
                     ) : run.status === "error" ? (
-                      <Badge tone="red" dot className="hidden shrink-0 sm:inline-flex text-[10px]">
+                      <Badge tone="red" dot className="hidden w-[68px] justify-center shrink-0 sm:inline-flex text-[10px]">
                         error
                       </Badge>
                     ) : (
-                      <Badge tone="teal" dot className="hidden shrink-0 sm:inline-flex text-[10px]">
+                      <Badge tone="teal" dot className="hidden w-[68px] justify-center shrink-0 sm:inline-flex text-[10px]">
                         running
                       </Badge>
                     )}

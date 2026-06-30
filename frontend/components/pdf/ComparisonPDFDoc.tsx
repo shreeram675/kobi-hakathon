@@ -384,16 +384,23 @@ function BriefSection({ brief, programs }: { brief: ComparisonBrief; programs: s
     return idx >= 0 ? progColor(idx) : C.navy;
   };
 
+  const summaryParagraphs = brief.executive_summary
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
   return (
     <View>
-      {/* Executive summary — always kept together */}
-      <View style={s.execBox} wrap={false}>
-        <Text style={s.execTag}>COMPETITIVE INTELLIGENCE BRIEF</Text>
+      {/* Analyst brief narrative — can span pages, unlike the rest of the brief */}
+      <View style={s.execBox}>
+        <Text style={s.execTag}>ANALYST BRIEF</Text>
         {brief.overall_winner
           ? <Text style={[s.execWinner, { color: winnerColor(brief.overall_winner) }]}>Overall leader: {brief.overall_winner}</Text>
           : <Text style={[s.execWinner, { color: C.inkLight }]}>Evenly matched — no clear overall leader</Text>
         }
-        <Text style={s.execSummary}>{brief.executive_summary}</Text>
+        {summaryParagraphs.map((p, i) => (
+          <Text key={i} style={i > 0 ? [s.execSummary, { marginTop: 6 }] : s.execSummary}>{p}</Text>
+        ))}
       </View>
 
       {/* Category verdicts — subheader anchored to first row */}

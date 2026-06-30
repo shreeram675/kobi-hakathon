@@ -5,18 +5,18 @@
 
 export const TOKENS = {
   ink: "#17202a",
-  navy: "#17324d",
-  teal: "#0f7c7d",
-  green: "#16704a",
-  amber: "#a66100",
-  red: "#b83232",
-  blue: "#1f65b7",
-  softGreen: "#e8f6ef",
-  softAmber: "#fff2d8",
-  softRed: "#fde8e8",
-  softGrey: "#eef2f6",
-  paper: "#f6f8fb",
-  line: "#d9e2ec",
+  navy: "#0d1b2a",
+  teal: "#F47920",
+  green: "#15803d",
+  amber: "#b45309",
+  red: "#dc2626",
+  blue: "#1a3a5c",
+  softGreen: "#f0fdf4",
+  softAmber: "#fffbeb",
+  softRed: "#fef2f2",
+  softGrey: "#f1f5f9",
+  paper: "#f9fafb",
+  line: "#e2e8f0",
   grey: "#64748b",
 } as const;
 
@@ -64,15 +64,15 @@ export const RESOLUTION_ACCENT: Record<ConflictResolution, Accent> = {
   auto_resolved: { fg: "green", hex: TOKENS.green, soft: TOKENS.softGreen, label: "Auto-resolved" },
   debate_required: { fg: "amber", hex: TOKENS.amber, soft: TOKENS.softAmber, label: "Debate required" },
   manual_review_needed: { fg: "red", hex: TOKENS.red, soft: TOKENS.softRed, label: "Manual review" },
-  merged: { fg: "teal", hex: TOKENS.teal, soft: "#e0f4f4", label: "Merged" },
-  field_type_resolved: { fg: "blue", hex: TOKENS.blue, soft: "#e6effb", label: "Strategy resolved" },
+  merged: { fg: "teal", hex: TOKENS.teal, soft: "#fff3e8", label: "Merged" },
+  field_type_resolved: { fg: "blue", hex: TOKENS.blue, soft: "#e8eef5", label: "Strategy resolved" },
 };
 
 export const FIELD_REPORT_ACCENT: Record<FieldReportStatus, Accent> = {
   extracted: { fg: "green", hex: TOKENS.green, soft: TOKENS.softGreen, label: "Extracted" },
-  ambiguous: { fg: "amber", hex: TOKENS.amber, soft: TOKENS.softAmber, label: "Ambiguous" },
+  ambiguous: { fg: "amber", hex: TOKENS.amber, soft: TOKENS.softAmber, label: "Unclear" },
   not_found: { fg: "red", hex: TOKENS.red, soft: TOKENS.softRed, label: "Not found" },
-  flagged: { fg: "blue", hex: TOKENS.blue, soft: "#e6effb", label: "Flagged" },
+  flagged: { fg: "blue", hex: TOKENS.blue, soft: "#e8eef5", label: "Needs review" },
 };
 
 /** Stable colour per source_type for pies / query grouping. */

@@ -108,9 +108,6 @@ case "${1:-start}" in
     sleep 1
     start_backend
     start_frontend
-    echo ""
-    echo "Servers restarted. Press Ctrl+C to tail logs (servers keep running on exit)."
-    tail -f "$BACKEND_LOG" "$FRONTEND_LOG"
     ;;
   start)
     # Warn if already running
@@ -120,9 +117,6 @@ case "${1:-start}" in
     fi
     start_backend
     start_frontend
-    echo ""
-    echo "Servers started. Press Ctrl+C to tail logs (servers keep running on exit)."
-    tail -f "$BACKEND_LOG" "$FRONTEND_LOG"
     ;;
   *)
     echo "Usage: $0 [start|stop|restart]"

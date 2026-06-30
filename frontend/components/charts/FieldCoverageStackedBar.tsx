@@ -32,9 +32,9 @@ export function FieldCoverageStackedBar({
 
   const series: { key: keyof (typeof data)[0]; label: string; color: string }[] = [
     { key: "extracted", label: "Extracted", color: FIELD_REPORT_ACCENT.extracted.hex },
-    { key: "ambiguous", label: "Ambiguous", color: FIELD_REPORT_ACCENT.ambiguous.hex },
+    { key: "ambiguous", label: "Unclear", color: FIELD_REPORT_ACCENT.ambiguous.hex },
     { key: "not_found", label: "Not found", color: FIELD_REPORT_ACCENT.not_found.hex },
-    { key: "flagged", label: "Flagged", color: FIELD_REPORT_ACCENT.flagged.hex },
+    { key: "flagged", label: "Needs review", color: FIELD_REPORT_ACCENT.flagged.hex },
   ];
 
   return (

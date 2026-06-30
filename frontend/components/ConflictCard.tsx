@@ -34,7 +34,6 @@ export function ConflictCard({ conflict }: { conflict: ConflictRecord }) {
                 {fieldLabel(conflict.field_path)}
               </p>
             </div>
-            <p className="font-mono text-[10px] text-ink/35">{conflict.field_path}</p>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5">
             <ResolutionBadge status={conflict.resolution_status} />

@@ -33,7 +33,6 @@ import { upsertRecentSearch, removeRecentSearch } from "@/lib/cache-storage";
 import type { RunHistoryEntry, RunMode } from "@/lib/types";
 
 type TypeFilter = "all" | "normal" | "compare";
-type StatusFilter = "all" | RunHistoryEntry["status"];
 type QualityFilter = "all" | "high" | "medium" | "low" | "unknown";
 type SourceFilter = "all" | "db" | "live";
 type SortKey = "newest" | "oldest" | "quality_desc" | "quality_asc" | "name_asc" | "mode";
@@ -187,13 +186,15 @@ function rowKey(run: RunHistoryEntry): string {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function HistoryPage() {
-  const { data: runs = [], isLoading, isError, refetch } = useRunHistory();
+  const { data: allRuns = [], isLoading, isError, refetch } = useRunHistory();
+  // History is a library of completed work only — in-progress/failed/cancelled runs
+  // live in "Recent analyses" on the homepage, not here.
+  const runs = useMemo(() => allRuns.filter((r) => r.status === "done"), [allRuns]);
   const router = useRouter();
   const qc = useQueryClient();
 
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("newest");
@@ -302,7 +303,6 @@ export default function HistoryPage() {
           .toLowerCase();
         if (normalizedQuery && !haystack.includes(normalizedQuery)) return false;
         if (typeFilter !== "all" && analysisType(run.mode) !== typeFilter) return false;
-        if (statusFilter !== "all" && run.status !== statusFilter) return false;
         if (qualityFilter !== "all" && qualityBucket(run.data_quality) !== qualityFilter) return false;
         if (sourceFilter !== "all" && run.source !== sourceFilter) return false;
         return true;
@@ -317,12 +317,11 @@ export default function HistoryPage() {
         if (sortKey === "mode") return modeLabel(a.mode).localeCompare(modeLabel(b.mode));
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       });
-  }, [qualityFilter, query, runs, sortKey, sourceFilter, statusFilter, typeFilter]);
+  }, [qualityFilter, query, runs, sortKey, sourceFilter, typeFilter]);
 
   const hasFilters =
     query ||
     typeFilter !== "all" ||
-    statusFilter !== "all" ||
     qualityFilter !== "all" ||
     sourceFilter !== "all" ||
     sortKey !== "newest";
@@ -330,7 +329,6 @@ export default function HistoryPage() {
   function clearFilters() {
     setQuery("");
     setTypeFilter("all");
-    setStatusFilter("all");
     setQualityFilter("all");
     setSourceFilter("all");
     setSortKey("newest");
@@ -362,14 +360,21 @@ export default function HistoryPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant={selectionMode ? "primary" : "outline"}
-              onClick={toggleSelectionMode}
-            >
-              <GitCompareArrows className="h-4 w-4" />
-              {selectionMode ? "Cancel selection" : "Compare runs"}
-            </Button>
+            {selectionMode ? (
+              <Button size="sm" variant="outline" onClick={toggleSelectionMode}>
+                <X className="h-4 w-4" />
+                Cancel selection
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                onClick={toggleSelectionMode}
+                className="bg-teal text-white hover:bg-teal/90 shadow-sm ring-1 ring-teal/40"
+              >
+                <GitCompareArrows className="h-4 w-4" />
+                Compare runs
+              </Button>
+            )}
             <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isLoading}>
               {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
               Refresh
@@ -377,7 +382,7 @@ export default function HistoryPage() {
           </div>
         </div>
 
-        {selectionMode && (
+        {selectionMode ? (
           <div className="mb-4 flex items-start gap-3 rounded-[10px] border border-teal/30 bg-teal/5 px-4 py-3 text-sm text-ink/70">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-teal" />
             <div>
@@ -385,6 +390,14 @@ export default function HistoryPage() {
               {" "}Click rows to select runs. You can mix normal and compare runs — programs from compare runs will be expanded.
               Select at least 2 runs to enable comparison.
             </div>
+          </div>
+        ) : (
+          <div className="mb-4 flex items-center gap-3 rounded-[10px] border border-teal/20 bg-teal/5 px-4 py-2.5">
+            <GitCompareArrows className="h-4 w-4 shrink-0 text-teal" />
+            <p className="text-[12px] text-ink/60">
+              <span className="font-semibold text-teal">Tip:</span>{" "}
+              Use <span className="font-semibold text-navy">Compare runs</span> to select multiple past analyses and run a fresh side-by-side comparison.
+            </p>
           </div>
         )}
 
@@ -396,7 +409,7 @@ export default function HistoryPage() {
         </section>
 
         <section className="mb-5 rounded-[12px] border border-line bg-white p-4 shadow-panel">
-          <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_auto_auto_auto_auto]">
+          <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_auto_auto_auto]">
             <label className="relative block">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/30" />
               <Input
@@ -411,15 +424,6 @@ export default function HistoryPage() {
               <option value="all">All types</option>
               <option value="normal">Normal Analyse</option>
               <option value="compare">Compare</option>
-            </Select>
-
-            <Select label="Status" value={statusFilter} onChange={(value) => setStatusFilter(value as StatusFilter)}>
-              <option value="all">All statuses</option>
-              <option value="done">Complete</option>
-              <option value="running">Running</option>
-              <option value="error">Error</option>
-              <option value="clarification_needed">Needs clarification</option>
-              <option value="cancelled">Stopped</option>
             </Select>
 
             <Select label="Content Extracted" value={qualityFilter} onChange={(value) => setQualityFilter(value as QualityFilter)}>

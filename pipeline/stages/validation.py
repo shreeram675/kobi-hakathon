@@ -13,6 +13,17 @@ from core.providers import provider_for_stage
 from core.schemas import ClarificationOption, ProgramIdentity, SearchContext, ValidationResult
 
 
+_INJECTION_PATTERN = re.compile(
+    r"(?i)(ignore\s+(previous|all)\s+instructions|you\s+are\s+now\s+a|"
+    r"disregard\s+the\s+above|new\s+persona|act\s+as\s+if|"
+    r"system\s*:\s*you\s+are|new\s+instructions\s*:)",
+)
+
+
+def _contains_prompt_injection(text: str) -> bool:
+    return bool(_INJECTION_PATTERN.search(text))
+
+
 INPUT_VERIFIER_SYSTEM_PROMPT = """
 You are the Input Validation Agent for Kobie — a professional loyalty program
 intelligence platform used by loyalty consultants, program managers, and strategy
@@ -26,12 +37,15 @@ unnecessary back-and-forth.
 RESOLUTION APPROACH
 ═══════════════════════════════════════════════════════
 
-Always search the web dynamically to identify the loyalty program. Do not rely
-on hardcoded mappings or static knowledge. For every input:
+Use your training knowledge to identify the loyalty program. Do NOT claim to
+be performing a live web search — you have no search tool. For every input:
 
-  1. Search for real loyalty programs matching the input
-  2. Evaluate results for confidence
+  1. Recall real loyalty programs that match the input from your training data
+  2. Evaluate confidence based on how well-known and unambiguous the program is
   3. Decide: resolve, clarify, or reject
+
+IMPORTANT: official_domain must only be set when you are highly confident it
+is correct. If there is any doubt, set it to null rather than guessing.
 
 ═══════════════════════════════════════════════════════
 DECISION PRIORITY ORDER
@@ -128,12 +142,12 @@ OUTPUT FIELDS
 
 official_domain (string)
   The program's primary web domain for T&C and FAQ pages.
-  Found via search — never guessed. Use null if not found.
+  Only populate when you are highly confident — set null if uncertain.
 
 noise_exclude_terms (array of strings)
   Keywords to add as negatives in Tavily queries to strip irrelevant results.
-  Populate based on what the search reveals about the brand's other business
-  lines, subsidiaries, or corporate entities that share the same name.
+  Populate based on your knowledge of the brand's other business lines,
+  subsidiaries, or corporate entities that share the same name.
   Leave empty [] if no noise risk detected.
 
 search_context.program_type (string)
@@ -143,7 +157,7 @@ search_context.program_type (string)
 search_context.entity_disambiguation (string)
   One sentence describing what this program IS and what it is NOT.
   Critical for conglomerates or brands where corporate and consumer entities
-  share a name. Derived from search results — not assumed.
+  share a name.
 
 program_subtype (optional)
   Set to "B2B" only for corporate-facing programs. Omit otherwise.
@@ -222,6 +236,13 @@ def validate_conversation(messages: list[dict[str, str]], chat_client: ChatClien
     user_messages = [message["content"].strip() for message in messages if message.get("role") == "user" and message.get("content", "").strip()]
     if not user_messages:
         return ValidationResult(status="rejected", confidence=0, reason="Input is empty.")
+
+    if any(_contains_prompt_injection(m) for m in user_messages):
+        return ValidationResult(
+            status="rejected",
+            confidence=0,
+            reason="Input contains disallowed content. Please enter a loyalty program name.",
+        )
 
     client = chat_client or OpenAICompatibleChatClient()
     try:

@@ -102,10 +102,27 @@ def answer_question(
             status=ClaimStatus.NULL,
         )
 
+    _UNCERTAINTY_PHRASES = (
+        "appears to be", "likely", "probably", "approximately",
+        "i believe", "may be", "might be", "unclear", "not certain",
+        "it seems", "roughly", "estimated",
+    )
+
     lower = answer_text.lower()
-    if "don't have that information" in lower or "not in the current brief" in lower:
+    if (
+        "not available in the extracted results" in lower
+        or "don't have that information" in lower
+        or "not in the current brief" in lower
+        or "no information" in lower
+    ):
         status = ClaimStatus.NOT_FOUND
-    elif "conflict" in lower or "needs verification" in lower or "flagged" in lower:
+    elif (
+        "conflict" in lower
+        or "needs verification" in lower
+        or "flagged" in lower
+        or "verify" in lower
+        or any(p in lower for p in _UNCERTAINTY_PHRASES)
+    ):
         status = ClaimStatus.CONFLICTING
     else:
         status = ClaimStatus.SUPPORTED
@@ -116,15 +133,21 @@ def answer_question(
 
 
 def _extract_source_urls(answer_text: str, field_report: FieldReport | None) -> list[str]:
-    """Return deduplicated source URLs for field paths cited in the answer."""
+    """Return deduplicated source URLs for field paths cited in the answer.
+
+    Returns an empty list when no field paths are cited — avoids falsely attributing
+    all field report sources to an answer that didn't actually reference any field.
+    """
     if not field_report:
         return []
     import re
     cited_paths = set(re.findall(r"\(([a-z_]+\.[a-z_]+(?:\.[a-z_]+)*)\)", answer_text))
+    if not cited_paths:
+        return []
     seen: set[str] = set()
     urls: list[str] = []
     for entry in field_report.entries:
-        if entry.field_path in cited_paths or not cited_paths:
+        if entry.field_path in cited_paths:
             for url in (entry.source_urls or []):
                 if url and url not in seen:
                     seen.add(url)
@@ -178,13 +201,15 @@ def _extract_source_urls_multi(
 ) -> list[str]:
     import re
     cited_paths = set(re.findall(r"\((?:[^)]+—\s*)?([a-z_]+\.[a-z_]+(?:\.[a-z_]+)*)\)", answer_text))
+    if not cited_paths:
+        return []
     seen: set[str] = set()
     urls: list[str] = []
     for _, field_report in program_reports:
         if field_report is None:
             continue
         for entry in field_report.entries:
-            if entry.field_path in cited_paths or not cited_paths:
+            if entry.field_path in cited_paths:
                 for url in (entry.source_urls or []):
                     if url and url not in seen:
                         seen.add(url)

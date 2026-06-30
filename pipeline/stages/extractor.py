@@ -623,16 +623,17 @@ def build_extraction_prompt(
         + (f"query_id: {chunk.query_id}\n" if chunk.query_id else "")
         + (f"chunk_index: {chunk.chunk_index}\n" if chunk.chunk_index is not None else "")
         + f"priority target fields: {', '.join(chunk.target_fields) if chunk.target_fields else 'all fields in the runtime schema'}\n"
-        f'chunk_text:\n"""{chunk.chunk_text}"""'
+        f'chunk_text:\n"""{_sanitize_chunk_for_prompt(chunk.chunk_text)}"""'
         for index, chunk in enumerate(chunks)
     )
     return f"""
 You are a strict structured extraction engine.
 
 {context_preamble}Use ONLY the chunk texts provided below. Do not use training knowledge. Do not
-guess or fill missing values. You may derive a value only when the chunk itself
-contains enough evidence to support that derivation, and the field must still
-include an exact supporting source_snippet copied from that chunk.
+guess, infer, compute, or fill missing values. Extract a value ONLY when it is
+explicitly stated in the chunk text — do not derive or calculate values not
+literally present. The source_snippet must be the exact text passage from which
+the value was directly read.
 
 Each CHUNK below is an independent evidence unit identified by chunk_id. Never
 combine evidence across chunks; every extracted field must be supported by the
@@ -829,6 +830,18 @@ def _parse_field(field_data: dict[str, Any], chunk: SemanticChunk) -> ExtractedF
         source_snippet=field_data.get("source_snippet") if status == "AMBIGUOUS" else None,
         confidence=_coerce_confidence(field_data.get("confidence")) if status == "AMBIGUOUS" else None,
     )
+
+
+def _sanitize_chunk_for_prompt(text: str) -> str:
+    """Strip prompt-injection patterns before embedding scraped text into the prompt."""
+    text = text.replace('"""', "'''")
+    text = re.sub(
+        r"(?i)(ignore\s+(previous|all)\s+instructions|new\s+instructions\s*:|"
+        r"you\s+are\s+now\s+a|disregard\s+the\s+above|system\s*:\s*you\s+are)",
+        "[FILTERED]",
+        text,
+    )
+    return text
 
 
 def _snippet_in_text(snippet: str, chunk_text: str) -> bool:

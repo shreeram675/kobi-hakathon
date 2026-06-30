@@ -23,14 +23,15 @@ import { useCreateRun } from "@/lib/hooks";
 import type { CreateRunBody, RunMode } from "@/lib/types";
 import { cn } from "@/lib/format";
 
-const EXAMPLES = ["Marriott Bonvoy", "Hilton Honors", "Delta SkyMiles", "World of Hyatt"];
+const EXAMPLES = ["AMC Stubs", "Victoria's Secret & PINK Rewards", "Best Buy Rewards"];
+const PLACEHOLDER_EXAMPLES = ["Fridays Rewards", "Busch Gardens Annual Pass Program"];
 
 const PROGRAM_COLORS = [
-  { label: "A", bg: "bg-teal/10", text: "text-teal", border: "border-teal/30", ring: "ring-teal/30" },
-  { label: "B", bg: "bg-blue/10", text: "text-blue", border: "border-blue/30", ring: "ring-blue/30" },
-  { label: "C", bg: "bg-navy/10", text: "text-navy", border: "border-navy/30", ring: "ring-navy/30" },
-  { label: "D", bg: "bg-green/10", text: "text-green", border: "border-green/30", ring: "ring-green/30" },
-  { label: "E", bg: "bg-amber/10", text: "text-amber", border: "border-amber/30", ring: "ring-amber/30" },
+  { label: "A", bg: "bg-orange-500/15", text: "text-orange-400", border: "border-orange-400/30", ring: "ring-orange-400/30" },
+  { label: "B", bg: "bg-sky-500/15", text: "text-sky-400", border: "border-sky-400/30", ring: "ring-sky-400/30" },
+  { label: "C", bg: "bg-violet-500/15", text: "text-violet-400", border: "border-violet-400/30", ring: "ring-violet-400/30" },
+  { label: "D", bg: "bg-emerald-500/15", text: "text-emerald-400", border: "border-emerald-400/30", ring: "ring-emerald-400/30" },
+  { label: "E", bg: "bg-rose-500/15", text: "text-rose-400", border: "border-rose-400/30", ring: "ring-rose-400/30" },
 ];
 
 const MODE_DETAIL: Record<RunMode, { title: string; sub: string; cta: string }> = {
@@ -121,23 +122,25 @@ export default function HomePage() {
           className="pointer-events-none absolute inset-0"
           style={{
             backgroundImage:
-              "linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px)",
-            backgroundSize: "40px 40px",
+              "linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px)",
+            backgroundSize: "48px 48px",
+            maskImage: "linear-gradient(to bottom, transparent 0%, black 15%, black 75%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 15%, black 75%, transparent 100%)",
           }}
         />
 
         <div className="relative mx-auto max-w-3xl px-5 py-12 sm:py-16 text-center">
-          <div className="inline-flex items-center gap-2 mb-5 rounded-pill border border-white/10 bg-white/5 px-3.5 py-1.5 text-xs font-medium text-white/65 shadow-sm backdrop-blur-sm">
+          <div className="inline-flex items-center gap-2 mb-5 rounded-pill border border-white/[0.12] bg-white/[0.06] px-3.5 py-1.5 text-xs font-medium text-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.07)] backdrop-blur-sm">
             <span className="h-1.5 w-1.5 rounded-full bg-[#F47920] animate-pulse" />
             Loyalty Intelligence Platform
-            <span className="ml-1 text-white/30">·</span>
-            <span className="text-white/45">AI-powered, source-verified</span>
+            <span className="mx-0.5 text-white/25">·</span>
+            <span className="text-white/40">AI-powered, source-verified</span>
           </div>
 
-          <h1 className="text-balance text-3xl sm:text-[2.4rem] font-bold tracking-tight text-white leading-[1.15] mb-4">
+          <h1 className="text-balance text-3xl sm:text-[2.4rem] font-bold tracking-[-0.02em] leading-[1.15] mb-4 bg-gradient-to-b from-white via-white to-white/70 bg-clip-text text-transparent">
             {detail.title}
           </h1>
-          <p className="mx-auto max-w-lg text-sm text-white/55 leading-relaxed mb-3">
+          <p className="mx-auto max-w-lg text-sm text-white/50 leading-relaxed mb-3">
             {detail.sub}
           </p>
 
@@ -154,7 +157,7 @@ export default function HomePage() {
           </div>
 
           {/* input card */}
-          <div className="mx-auto max-w-xl rounded-[14px] border border-white/10 bg-white/[0.05] p-4 text-left shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur-sm">
+          <div className="mx-auto max-w-xl rounded-[14px] border border-white/[0.12] bg-white/[0.05] p-4 text-left shadow-[0_24px_60px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-sm">
             {mode === "compare" ? (
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between mb-1">
@@ -185,7 +188,7 @@ export default function HomePage() {
                         onKeyDown={(e) => {
                           if ((e.metaKey || e.ctrlKey) && e.key === "Enter") handleSubmit();
                         }}
-                        placeholder={`e.g. ${EXAMPLES[idx % EXAMPLES.length]}`}
+                        placeholder={`e.g. ${PLACEHOLDER_EXAMPLES[idx % PLACEHOLDER_EXAMPLES.length]}`}
                         className={cn("flex-1 transition-all", prog.trim() && `ring-1 ${color.ring}`)}
                       />
                       {programs.length > 2 && (
@@ -223,7 +226,7 @@ export default function HomePage() {
                   onKeyDown={(e) => {
                     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") handleSubmit();
                   }}
-                  placeholder="e.g. Marriott Bonvoy, Hilton Honors, Alaska Airlines MVP…  (⌘+Enter)"
+                  placeholder={`e.g. ${PLACEHOLDER_EXAMPLES.join(", ")}…  (⌘+Enter)`}
                 />
               </div>
             )}
@@ -267,8 +270,8 @@ export default function HomePage() {
         <RecentRunsList />
       </main>
 
-      <footer className="border-t border-line bg-white/60 px-5 py-3 text-center text-[11px] text-ink/30">
-        Kobie Loyalty Intelligence · AI-extracted, source-cited competitive data
+      <footer className="border-t border-line bg-paper/80 px-5 py-3 text-center text-[11px] text-ink/25 tracking-wide">
+        Kobie Loyalty Intelligence &nbsp;·&nbsp; AI-extracted, source-cited competitive data
       </footer>
 
     </div>

@@ -6,17 +6,17 @@
   --ink: #17202a;
   --navy: #0d1b2a;
   --teal: #F47920;
-  --green: #16704a;
-  --amber: #a66100;
-  --red: #b83232;
+  --green: #15803d;
+  --amber: #b45309;
+  --red: #dc2626;
   --blue: #1a3a5c;
-  --soft-green: #e8f6ef;
-  --soft-amber: #fff2d8;
-  --soft-red: #fde8e8;
-  --soft-grey: #eef2f6;
-  --paper: #f4f7fb;
-  --line: #d9e2ec;
-  --canvas: #f0f4f8;
+  --soft-green: #f0fdf4;
+  --soft-amber: #fffbeb;
+  --soft-red: #fef2f2;
+  --soft-grey: #f1f5f9;
+  --paper: #f9fafb;
+  --line: #e2e8f0;
+  --canvas: #f1f5f9;
 }
 
 @layer base {
@@ -135,9 +135,9 @@
 /* ---- hero gradient ---- */
 .hero-mesh {
   background:
-    radial-gradient(70% 130% at 10% 0%, rgba(244,121,32,0.4) 0%, transparent 55%),
-    radial-gradient(55% 110% at 100% 100%, rgba(26,58,92,0.55) 0%, transparent 60%),
-    radial-gradient(40% 80% at 50% 50%, rgba(13,27,42,0.25) 0%, transparent 70%),
+    radial-gradient(60% 110% at 8% 0%, rgba(244,121,32,0.18) 0%, transparent 55%),
+    radial-gradient(45% 90% at 95% 100%, rgba(26,58,92,0.45) 0%, transparent 60%),
+    radial-gradient(30% 60% at 50% 50%, rgba(13,27,42,0.2) 0%, transparent 70%),
     #0d1b2a;
 }
 

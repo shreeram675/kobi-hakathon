@@ -764,7 +764,7 @@ def parse_query_generation_output(
         geography=empty_to_none(payload.get("geography")) or (identity.country_or_region if identity else None),
         query_strategy_summary=str(payload.get("query_strategy_summary") or "Generated Tavily query plan."),
         priority_fields=[str(field) for field in payload.get("priority_fields", [])],
-        estimated_web_coverage=normalize_coverage(payload.get("estimated_web_coverage")),
+        estimated_web_coverage=min(normalize_coverage(payload.get("estimated_web_coverage")), 0.85),
         field_query_map={
             str(field): [
                 external_to_internal.get(str(query_id), str(query_id))
