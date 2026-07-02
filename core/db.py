@@ -175,6 +175,12 @@ def connect(path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+def checkpoint(conn: sqlite3.Connection) -> None:
+    """Merge the WAL into the main DB file so data survives loss of -wal/-shm."""
+    with _WRITE_LOCK:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+
 def migrate(conn: sqlite3.Connection) -> None:
     with _WRITE_LOCK:
         # Migrate run_snapshots if it exists with the old schema (keyed by run_id, not program_name_normalized)
@@ -227,6 +233,7 @@ def upsert_run(
             ),
         )
         conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
 
 def list_runs(conn: sqlite3.Connection, limit: int = 200) -> list[dict]:
@@ -354,6 +361,7 @@ def save_program_snapshot(
             (normalized, program_name, brand, country_or_region, program_state_json, created_at),
         )
         conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
 
 def find_program_snapshot(conn: sqlite3.Connection, query: str) -> dict | None:

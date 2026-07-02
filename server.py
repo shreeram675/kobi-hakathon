@@ -65,6 +65,14 @@ app = FastAPI(title="Kobie API")
 _db_conn: sqlite3.Connection = _db.connect()
 _db.migrate(_db_conn)
 
+
+@app.on_event("shutdown")
+def _checkpoint_db_on_shutdown() -> None:
+    try:
+        _db.checkpoint(_db_conn)
+    except Exception:
+        logger.exception("Failed to checkpoint DB on shutdown")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000",
