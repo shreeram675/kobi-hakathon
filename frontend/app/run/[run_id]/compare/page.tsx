@@ -29,6 +29,7 @@ import { useRun, useGenerateBrief } from "@/lib/hooks";
 import { DownloadPDFButton } from "@/components/DownloadPDFButton";
 import { ConverseThread } from "@/components/ConverseThread";
 import { cn, signed, renderValue } from "@/lib/format";
+import { LinkifiedText, domainOf } from "@/lib/sources";
 import {
   CATEGORY_ORDER,
   CATEGORY_LABELS,
@@ -149,7 +150,10 @@ function TwoProgramView({ runId, state }: { runId: string; state: AgentState }) 
   const qa = state.data_quality;
   const qb = stateB.data_quality;
   const delta = qa - qb;
-  const brief = state.comparison_brief ?? null;
+  const rawBrief = state.comparison_brief ?? null;
+  // A hollow brief (summary only, no category verdicts) is a failed/stub
+  // generation — treat it as missing so the auto-generate effect replaces it.
+  const brief = rawBrief && rawBrief.category_verdicts.length > 0 ? rawBrief : null;
   const isDone = state.status === "done";
   const generateBrief = useGenerateBrief(runId);
 
@@ -197,10 +201,13 @@ function TwoProgramView({ runId, state }: { runId: string; state: AgentState }) 
           {generateBrief.isPending ? "Generating competitive intelligence brief…" : "Generating competitive intelligence brief…"}
         </div>
       ) : generateBrief.isError ? (
-        <div className="flex items-center gap-2 rounded-card border border-amber/30 bg-amber/5 px-5 py-4 text-sm text-ink/55 shadow-sm">
-          <AlertCircle className="h-4 w-4 shrink-0 text-amber" />
-          Brief generation failed — the field-by-field comparison is still available below.
-        </div>
+        <>
+          <div className="flex items-center gap-2 rounded-card border border-amber/30 bg-amber/5 px-5 py-4 text-sm text-ink/55 shadow-sm">
+            <AlertCircle className="h-4 w-4 shrink-0 text-amber" />
+            Brief generation failed — the field-by-field comparison is still available below.
+          </div>
+          {rawBrief && <ComparisonBriefPanel brief={rawBrief} />}
+        </>
       ) : null}
 
       {/* Comparison chat — grounded strictly in the comparison brief and per-program field data */}
@@ -229,13 +236,7 @@ function TwoProgramView({ runId, state }: { runId: string; state: AgentState }) 
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function _domain(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
+const _domain = domainOf;
 
 // ── Comparison brief panel ────────────────────────────────────────────────────
 
@@ -273,7 +274,9 @@ function ComparisonBriefPanel({ brief }: { brief: ComparisonBrief }) {
             </div>
             <div className="space-y-3">
               {summaryParagraphs.map((p, i) => (
-                <p key={i} className="text-[13.5px] leading-relaxed text-ink/80">{p}</p>
+                <p key={i} className="text-[13.5px] leading-relaxed text-ink/80">
+                  <LinkifiedText text={p} />
+                </p>
               ))}
             </div>
           </div>
@@ -301,7 +304,9 @@ function ComparisonBriefPanel({ brief }: { brief: ComparisonBrief }) {
                     )}
                     <span className={cn("truncate text-sm font-semibold", color)}>{v.winner}</span>
                   </div>
-                  <p className="mt-1.5 text-[11px] leading-snug text-ink/55">{v.insight}</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-ink/60 break-words">
+                    <LinkifiedText text={v.insight} />
+                  </p>
                   {v.source_urls && v.source_urls.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1">
                       {v.source_urls.map((url, i) => (
@@ -334,10 +339,12 @@ function ComparisonBriefPanel({ brief }: { brief: ComparisonBrief }) {
               <div key={i} className="flex items-start gap-4 px-4 py-3">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-navy">{d.topic}</p>
-                  <p className="mt-0.5 text-sm text-ink/65 leading-relaxed">{d.insight}</p>
+                  <p className="mt-0.5 text-sm text-ink/65 leading-relaxed break-words">
+                    <LinkifiedText text={d.insight} />
+                  </p>
                   {d.rejected_note && (
-                    <p className="mt-1.5 text-[11px] leading-snug text-amber/80 italic border-l-2 border-amber/30 pl-2">
-                      {d.rejected_note}
+                    <p className="mt-1.5 text-xs leading-snug text-amber/80 italic border-l-2 border-amber/30 pl-2 break-words">
+                      <LinkifiedText text={d.rejected_note} />
                     </p>
                   )}
                   {d.source_urls && d.source_urls.length > 0 && (
@@ -382,7 +389,9 @@ function ComparisonBriefPanel({ brief }: { brief: ComparisonBrief }) {
               return (
                 <div key={i} className={cn("rounded-card border p-4", i === 0 ? "border-teal/30 bg-teal/5" : i === 1 ? "border-blue/30 bg-blue/5" : "border-navy/30 bg-navy/5")}>
                   <p className={cn("text-xs font-bold uppercase tracking-wide mb-1", c.accent)}>{p.program}</p>
-                  <p className="text-sm text-ink/75 leading-relaxed">{p.best_for}</p>
+                  <p className="text-sm text-ink/75 leading-relaxed break-words">
+                    <LinkifiedText text={p.best_for} />
+                  </p>
                 </div>
               );
             })}
@@ -427,16 +436,16 @@ function StrategicProfilesSection({
 
               <div className="grid grid-cols-2 divide-x divide-line">
                 {/* Advantages */}
-                <div className="p-3">
+                <div className="min-w-0 p-3">
                   <p className="mb-2 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-green">
                     <CheckCircle2 className="h-3 w-3" /> Strengths
                   </p>
                   {profile.advantages.length > 0 ? (
                     <ul className="space-y-1.5">
                       {profile.advantages.map((adv, j) => (
-                        <li key={j} className="flex items-start gap-1.5 text-[11px] text-ink/75 leading-snug">
-                          <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-green/60" />
-                          {adv}
+                        <li key={j} className="flex items-start gap-1.5 text-xs text-ink/75 leading-relaxed">
+                          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-green/60" />
+                          <span className="min-w-0 break-words"><LinkifiedText text={adv} /></span>
                         </li>
                       ))}
                     </ul>
@@ -446,16 +455,16 @@ function StrategicProfilesSection({
                 </div>
 
                 {/* Gaps */}
-                <div className="p-3">
+                <div className="min-w-0 p-3">
                   <p className="mb-2 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-amber">
                     <ShieldAlert className="h-3 w-3" /> Gaps
                   </p>
                   {profile.gaps.length > 0 ? (
                     <ul className="space-y-1.5">
                       {profile.gaps.map((gap, j) => (
-                        <li key={j} className="flex items-start gap-1.5 text-[11px] text-ink/75 leading-snug">
-                          <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber/60" />
-                          {gap}
+                        <li key={j} className="flex items-start gap-1.5 text-xs text-ink/75 leading-relaxed">
+                          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber/60" />
+                          <span className="min-w-0 break-words"><LinkifiedText text={gap} /></span>
                         </li>
                       ))}
                     </ul>
@@ -488,13 +497,17 @@ function MultiProgramView({
 }) {
   const generateBrief = useGenerateBrief(runId);
   const isDone = state.status === "done";
+  const rawBrief = state.comparison_brief ?? null;
+  // A hollow brief (summary only, no category verdicts) is a failed/stub
+  // generation — treat it as missing so the auto-generate effect replaces it.
+  const brief = rawBrief && rawBrief.category_verdicts.length > 0 ? rawBrief : null;
 
   useEffect(() => {
-    if (isDone && !state.comparison_brief && !generateBrief.isPending && !generateBrief.isSuccess && !generateBrief.isError) {
+    if (isDone && !brief && !generateBrief.isPending && !generateBrief.isSuccess && !generateBrief.isError) {
       generateBrief.mutate();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDone, state.comparison_brief]);
+  }, [isDone, brief]);
   const { programs, program_states, program_statuses } = compRun;
 
   // Only consider completed program states
@@ -563,18 +576,21 @@ function MultiProgramView({
       </div>
 
       {/* AI brief — shown when available */}
-      {state.comparison_brief ? (
-        <ComparisonBriefPanel brief={state.comparison_brief} />
+      {brief ? (
+        <ComparisonBriefPanel brief={brief} />
       ) : generateBrief.isPending || !isDone ? (
         <div className="flex items-center gap-2 rounded-card border border-line bg-white px-5 py-4 text-sm text-ink/50 shadow-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
           Generating competitive intelligence brief…
         </div>
       ) : generateBrief.isError ? (
-        <div className="flex items-center gap-2 rounded-card border border-amber/30 bg-amber/5 px-5 py-4 text-sm text-ink/55 shadow-sm">
-          <AlertCircle className="h-4 w-4 shrink-0 text-amber" />
-          Brief generation failed — the field-by-field comparison is still available below.
-        </div>
+        <>
+          <div className="flex items-center gap-2 rounded-card border border-amber/30 bg-amber/5 px-5 py-4 text-sm text-ink/55 shadow-sm">
+            <AlertCircle className="h-4 w-4 shrink-0 text-amber" />
+            Brief generation failed — the field-by-field comparison is still available below.
+          </div>
+          {rawBrief && <ComparisonBriefPanel brief={rawBrief} />}
+        </>
       ) : null}
 
       {/* Multi-column field comparison table */}

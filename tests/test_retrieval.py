@@ -64,7 +64,7 @@ def test_tavily_client_reports_dns_or_network_failure(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "test_key")
     client = TavilyRestClient(max_retries=1, retry_sleep_seconds=0)
 
-    with patch("retrieval.requests.post", side_effect=requests.ConnectionError("dns failed")):
-        with patch("retrieval.time.sleep"):
+    with patch("pipeline.stages.retrieval.requests.post", side_effect=requests.ConnectionError("dns failed")):
+        with patch("pipeline.stages.retrieval.time.sleep"):
             with pytest.raises(RuntimeError, match="could not reach api.tavily.com"):
                 client.search("Example Rewards terms")

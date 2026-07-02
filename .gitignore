@@ -12,3 +12,6 @@ Kobie_Phase2_ArcGuide_Updated.pdf
 *.log
 frontend/.env.local
 UsersshreeramAppDataLocalTempkobi-pytest/
+.backend.pid
+.frontend.pid
+db_corrupted_backup/

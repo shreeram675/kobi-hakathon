@@ -11,6 +11,7 @@ import {
   CATEGORY_ORDER, CATEGORY_LABELS, FOCUSED_SCHEMA_FIELD_PATHS, fieldLabel, type Category,
 } from '@/lib/schema';
 import { renderValue } from '@/lib/format';
+import { stripInlineSources } from '@/lib/sources';
 
 // ── Brand colours ─────────────────────────────────────────────────────────────
 
@@ -313,10 +314,10 @@ function VerdictRow({ row }: { row: CategoryVerdict[] }) {
         <View key={v.category} style={[s.verdictCard, ci === row.length - 1 ? { marginRight: 0 } : {}]}>
           <Text style={s.verdictCatLabel}>{v.label.toUpperCase()}</Text>
           <Text style={[s.verdictWinner]}>{v.winner}</Text>
-          <Text style={s.verdictInsight}>{v.insight}</Text>
+          <Text style={s.verdictInsight}>{stripInlineSources(v.insight)}</Text>
           {v.source_urls && v.source_urls.length > 0 && v.source_urls.slice(0, 3).map((url, i) => (
             <Link key={i} src={url} style={s.verdictLink}>
-              {`${domainOf(url)}  —  ${url.length > 55 ? url.slice(0, 52) + '…' : url}`}
+              {domainOf(url)}
             </Link>
           ))}
         </View>
@@ -347,14 +348,14 @@ function ProfileRow({ row, programs }: { row: ProgramStrategicProfile[]; program
               <View style={[s.profileCol, { borderRightWidth: 0.5, borderRightColor: C.line }]}>
                 <Text style={[s.profileColLabel, { color: C.green }]}>STRENGTHS</Text>
                 {profile.advantages.length > 0
-                  ? profile.advantages.map((a, j) => <Text key={j} style={s.profileItem}>{`· ${a}`}</Text>)
+                  ? profile.advantages.map((a, j) => <Text key={j} style={s.profileItem}>{`· ${stripInlineSources(a)}`}</Text>)
                   : <Text style={[s.profileItem, { color: C.inkFaint }]}>No data</Text>
                 }
               </View>
               <View style={s.profileCol}>
                 <Text style={[s.profileColLabel, { color: C.amber }]}>GAPS</Text>
                 {profile.gaps.length > 0
-                  ? profile.gaps.map((g, j) => <Text key={j} style={s.profileItem}>{`· ${g}`}</Text>)
+                  ? profile.gaps.map((g, j) => <Text key={j} style={s.profileItem}>{`· ${stripInlineSources(g)}`}</Text>)
                   : <Text style={[s.profileItem, { color: C.inkFaint }]}>No data</Text>
                 }
               </View>
@@ -399,7 +400,7 @@ function BriefSection({ brief, programs }: { brief: ComparisonBrief; programs: s
           : <Text style={[s.execWinner, { color: C.inkLight }]}>Evenly matched — no clear overall leader</Text>
         }
         {summaryParagraphs.map((p, i) => (
-          <Text key={i} style={i > 0 ? [s.execSummary, { marginTop: 6 }] : s.execSummary}>{p}</Text>
+          <Text key={i} style={i > 0 ? [s.execSummary, { marginTop: 6 }] : s.execSummary}>{stripInlineSources(p)}</Text>
         ))}
       </View>
 
@@ -429,11 +430,11 @@ function BriefSection({ brief, programs }: { brief: ComparisonBrief; programs: s
                   <View style={s.diffRow}>
                     <View style={s.diffContent}>
                       <Text style={s.diffTopic}>{d.topic}</Text>
-                      <Text style={s.diffInsight}>{d.insight}</Text>
-                      {d.rejected_note && <Text style={s.diffNote}>{d.rejected_note}</Text>}
+                      <Text style={s.diffInsight}>{stripInlineSources(d.insight)}</Text>
+                      {d.rejected_note && <Text style={s.diffNote}>{stripInlineSources(d.rejected_note)}</Text>}
                       {d.source_urls?.slice(0, 4).map((url, j) => (
                         <Link key={j} src={url} style={s.diffSourceLine}>
-                          {`${j + 1}. ${domainOf(url)}  —  ${url.length > 80 ? url.slice(0, 77) + '…' : url}`}
+                          {`${j + 1}. ${domainOf(url)}`}
                         </Link>
                       ))}
                     </View>
@@ -447,11 +448,11 @@ function BriefSection({ brief, programs }: { brief: ComparisonBrief; programs: s
               <View key={i} style={[s.diffRow, (i + 1) % 2 === 1 ? s.diffRowAlt : {}]} wrap={false}>
                 <View style={s.diffContent}>
                   <Text style={s.diffTopic}>{d.topic}</Text>
-                  <Text style={s.diffInsight}>{d.insight}</Text>
-                  {d.rejected_note && <Text style={s.diffNote}>{d.rejected_note}</Text>}
+                  <Text style={s.diffInsight}>{stripInlineSources(d.insight)}</Text>
+                  {d.rejected_note && <Text style={s.diffNote}>{stripInlineSources(d.rejected_note)}</Text>}
                   {d.source_urls?.slice(0, 4).map((url, j) => (
                     <Link key={j} src={url} style={s.diffSourceLine}>
-                      {`${j + 1}. ${domainOf(url)}  —  ${url.length > 80 ? url.slice(0, 77) + '…' : url}`}
+                      {`${j + 1}. ${domainOf(url)}`}
                     </Link>
                   ))}
                 </View>
@@ -485,7 +486,7 @@ function BriefSection({ brief, programs }: { brief: ComparisonBrief; programs: s
               return (
                 <View key={i} style={[s.personaCard, { backgroundColor: pBg }, i === brief.personas.length - 1 ? { marginRight: 0 } : {}]}>
                   <Text style={[s.personaProgram, { color: pColor }]}>{p.program.toUpperCase()}</Text>
-                  <Text style={s.personaBestFor}>{p.best_for}</Text>
+                  <Text style={s.personaBestFor}>{stripInlineSources(p.best_for)}</Text>
                 </View>
               );
             })}

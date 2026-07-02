@@ -178,8 +178,8 @@ def test_gemini_client_retries_transient_503(monkeypatch):
         ]
     }
 
-    with patch("query_generator.requests.post", side_effect=[unavailable, ok]) as post:
-        with patch("query_generator.time.sleep"):
+    with patch("pipeline.stages.query_generator.requests.post", side_effect=[unavailable, ok]) as post:
+        with patch("pipeline.stages.query_generator.time.sleep"):
             client = GeminiQueryGeneratorClient(max_retries=1, retry_sleep_seconds=0)
             result = client.complete_json("prompt")
 
@@ -209,8 +209,8 @@ def test_gemini_client_falls_back_to_lite_model_after_503(monkeypatch):
         ]
     }
 
-    with patch("query_generator.requests.post", side_effect=[unavailable, ok]) as post:
-        with patch("query_generator.time.sleep"):
+    with patch("pipeline.stages.query_generator.requests.post", side_effect=[unavailable, ok]) as post:
+        with patch("pipeline.stages.query_generator.time.sleep"):
             client = GeminiQueryGeneratorClient(max_retries=0, retry_sleep_seconds=0)
             result = client.complete_json("prompt")
 
@@ -226,8 +226,8 @@ def test_gemini_client_reports_transient_failure_after_retries(monkeypatch):
     monkeypatch.setenv("QUERY_GENERATOR_FALLBACK_MODELS", "")
     unavailable = Mock(status_code=503)
 
-    with patch("query_generator.requests.post", return_value=unavailable):
-        with patch("query_generator.time.sleep"):
+    with patch("pipeline.stages.query_generator.requests.post", return_value=unavailable):
+        with patch("pipeline.stages.query_generator.time.sleep"):
             client = GeminiQueryGeneratorClient(max_retries=1, retry_sleep_seconds=0)
             with pytest.raises(requests.HTTPError, match="temporarily unavailable"):
                 client.complete_json("prompt")

@@ -60,20 +60,20 @@ Your task: compare these programs and produce a structured JSON brief. Base EVER
 OUTPUT (strict JSON only — no markdown fences, no commentary):
 {{
   "overall_winner": "<program name that clearly leads, or null if genuinely tied>",
-  "executive_summary": "<A full analyst narrative, 400-600 words, written as flowing prose paragraphs (separate paragraphs with \\n\\n) — NOT a bulleted list and NOT a single terse blurb. Write it the way a senior analyst would open a client report: open with the headline finding and who leads overall and why; then walk through the 2-3 categories where the programs differ most sharply, weaving in actual numbers and source citations like (source: domain.com) as you go; then cover where they're evenly matched or where data is too thin to call; close with a short takeaway on which traveller/consumer profile each program suits best. Cite real data points throughout — this should read like something a person wrote after studying the data, not a list of facts.>",
+  "executive_summary": "<An analyst narrative, 250-400 words, written as flowing prose paragraphs (separate paragraphs with \\n\\n) — NOT a bulleted list and NOT a single terse blurb. Open with the headline finding and who leads overall and why; then walk through the 2-3 categories where the programs differ most sharply, weaving in actual numbers and domain-only source citations like (source: domain.com) as you go; close with a short takeaway on which consumer profile each program suits best. Never paste full URLs into this text.>",
   "category_verdicts": [
     {{
       "category": "<category key from list below>",
       "label": "<human-readable label>",
       "winner": "<program name, 'Tie', or 'Insufficient data'>",
-      "insight": "<2-3 sentences citing actual values and their source URLs in parentheses, e.g. '10 pts/$ (source: example.com) vs 5 miles/$ (source: other.com)'. If a conflicting value was rejected for this field, note it: 'An earlier claim of X from source Y was superseded because Z.'>",
+      "insight": "<1-2 crisp sentences citing actual values, e.g. '10 pts/$ vs 5 miles/$ — Aerie earns 3x faster.' Cite sources by domain only, e.g. (source: example.com) — NEVER paste full URLs into this text. If a conflicting value was rejected, add one short clause noting it.>",
       "source_urls": ["<full URL 1>", "<full URL 2>"]
     }}
   ],
   "key_differentiators": [
     {{
       "topic": "<short topic name>",
-      "insight": "<2-3 sentences, specific numbers, source URLs in parentheses>",
+      "insight": "<2-3 sentences, specific numbers; cite by domain only e.g. (source: example.com), never full URLs>",
       "advantage": "<program name that wins on this dimension>",
       "source_urls": ["<full URL>"],
       "rejected_note": "<if a conflicting value exists: 'Program X also claimed Y (source: url) — rejected because Z'. Omit field if no conflict.>"
@@ -102,7 +102,8 @@ RULES:
 - strategic_profiles: one entry per program; advantages and gaps must be grounded in extracted data, not invented
 - If a category has no data for any program, set winner to "Insufficient data" and insight to "No data extracted."
 - overall_winner must be null if the margin is not meaningful or data is sparse
-- ALWAYS cite actual source URLs in insights — use the URLs provided in the data blocks above
+- NEVER paste full URLs (https://...) into insight/summary/advantages/gaps prose — cite by bare domain, e.g. (source: example.com). Full URLs belong ONLY in the source_urls arrays
+- strategic_profiles advantages/gaps bullets must be short punchy phrases (under 15 words each), no URLs
 - For every field that lists a REJECTED value, you MUST acknowledge it: state the rejected value, its source, and why it was rejected
 - When a field shows "REJECTED" data, the reason often reveals whether the data was stale, lower-confidence, or from a less authoritative source — explain this nuance
 - Do NOT reject one source entirely when both may be valid (e.g. one is recent data, one is older) — instead acknowledge the discrepancy with context
@@ -110,7 +111,7 @@ RULES:
 - Fields marked "[range across sources]" list values from multiple sources that may apply to different categories — describe the full range in your insight
 - Fields marked "[combined from multiple sources]" are union-merged lists — treat the merged value as the complete picture
 - source_urls arrays must contain the full URLs (https://...), not just domains
-- Target total brief length: 700-1200 words across all fields combined
+- Target total brief length: 500-900 words across all fields combined — concise and scannable beats exhaustive
 - Output ONLY the JSON object. No preamble.\
 """
 
@@ -213,6 +214,15 @@ def generate_comparison_brief(
     known_urls = _collect_known_urls(field_reports)
     raw = _call_gemini(prompt)
     data = _parse_json(raw)
+    if not data.get("category_verdicts"):
+        # The model occasionally returns a hollow object (summary only, empty
+        # arrays). Retry once rather than persisting an unusable brief.
+        raw = _call_gemini(prompt)
+        data = _parse_json(raw)
+    if not data.get("category_verdicts"):
+        raise RuntimeError(
+            "Comparison brief LLM returned no category verdicts after retry"
+        )
     return _build_brief(run_id, programs, data, known_urls=known_urls)
 
 
@@ -306,7 +316,7 @@ def _call_gemini(prompt: str, max_retries: int = 2) -> str:
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
                     "temperature": 0.2,
-                    "maxOutputTokens": 8192,
+                    "maxOutputTokens": 16384,
                     "responseMimeType": "application/json",
                     "thinkingConfig": {"thinkingBudget": 0},
                 },

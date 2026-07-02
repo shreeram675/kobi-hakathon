@@ -70,8 +70,8 @@ def test_firecrawl_402_reports_insufficient_credits(monkeypatch):
         def raise_for_status(self):
             raise AssertionError("raise_for_status should not be reached for 402")
 
-    monkeypatch.setattr("firecrawl_scraper.provider_for_stage", lambda stage: FakeProvider())
-    monkeypatch.setattr("firecrawl_scraper.requests.post", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr("pipeline.stages.firecrawl_scraper.provider_for_stage", lambda stage: FakeProvider())
+    monkeypatch.setattr("pipeline.stages.firecrawl_scraper.requests.post", lambda *args, **kwargs: FakeResponse())
 
     client = FirecrawlRestClient(api_key="fc-test", api_base="https://api.firecrawl.dev/v2/scrape")
     with pytest.raises(RuntimeError, match="Insufficient Credits"):

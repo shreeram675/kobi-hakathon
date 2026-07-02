@@ -197,8 +197,13 @@ def test_adjudicator_flags_unresolvable_debate(monkeypatch):
 
     monkeypatch.setattr(conflict_adjudicator, "run_debate", _flagged)
 
+    # "earn_rate_base" is routed through the deterministic "range" field-type
+    # strategy (see FIELD_STRATEGY_MAP), which never reaches the debate engine.
+    # Use a field mapped to "debate" so this test actually exercises the FLAG path.
+    conflict = ba_conflict()
+    conflict["field_name"] = "point_value_cpp"
     state = build_initial_state("Any Program")
-    state["conflicts"] = [ba_conflict()]
+    state["conflicts"] = [conflict]
 
     updated = adjudicator_node(state)
 
@@ -209,7 +214,7 @@ def test_adjudicator_flags_unresolvable_debate(monkeypatch):
     assert values == {"1.5 Avios per pound", "1.0 Avios per pound"}
     assert len(updated["human_review_queue"]) == 1
     review = updated["human_review_queue"][0]
-    assert review["field_name"] == "earn_rate_base"
+    assert review["field_name"] == "point_value_cpp"
     assert "debate_transcript" in review
     assert "judge_verdict" in review
 

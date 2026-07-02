@@ -2081,7 +2081,7 @@ def trigger_generate_brief(run_id: str) -> dict[str, Any]:
             "run_id": run_id,
             "mode": "compare",
             "user_input": payload.get("user_input", ""),
-            "program_name": payload.get("program_name") or " vs ".join(brief_names),
+            "program_name": " vs ".join(brief_names) if brief_names else payload.get("program_name", ""),
             "domain": payload.get("domain"),
             "data_quality": payload.get("data_quality", 0),
             "created_at": payload.get("created_at"),

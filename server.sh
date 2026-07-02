@@ -70,7 +70,7 @@ start_backend() {
   fi
   echo "Starting FastAPI backend on http://127.0.0.1:8000 ..."
   cd "$ROOT"
-  uvicorn server:app --host 127.0.0.1 --port 8000 --reload \
+  "$ROOT/.venv/bin/uvicorn" server:app --host 127.0.0.1 --port 8000 --reload \
     --reload-dir "$ROOT" \
     --reload-exclude "*.venv*" \
     --reload-exclude "*/frontend/*" \
